@@ -111,6 +111,26 @@ describe('Empirical Challenger M1-2: Adversarial Stress Test Suite for Grouping 
       draggingIds = allElements.filter((el) => el.groupId === leader.groupId).map((el) => el.id);
     }
 
+    // Expand group members for ALL elements participating in the drag
+    const groupIdsInDrag = new Set<string>();
+    draggingIds.forEach((elId) => {
+      const el = allElements.find((item) => item.id === elId);
+      if (el?.groupId) groupIdsInDrag.add(el.groupId);
+    });
+    if (groupIdsInDrag.size > 0) {
+      const allGroupMemberIds = allElements
+        .filter((el) => el.groupId && groupIdsInDrag.has(el.groupId))
+        .map((el) => el.id);
+      draggingIds = Array.from(new Set([...draggingIds, ...allGroupMemberIds]));
+    }
+
+    // If ANY participating element is locked, cancel drag immediately
+    const hasLocked = draggingIds.some((elId) => {
+      const el = allElements.find((item) => item.id === elId);
+      return el?.locked === true;
+    });
+    if (hasLocked) return [];
+
     if (dx === 0 && dy === 0) return [];
 
     const updatedElements: CanvasElement[] = [];
@@ -506,17 +526,18 @@ describe('Empirical Challenger M1-2: Adversarial Stress Test Suite for Grouping 
       expect(transactionCount).toBe(0);
     });
 
-    it('CHALLENGE-GRP-4.3: moving group when one member is locked skips the locked member', () => {
+    it('CHALLENGE-GRP-4.3: moving group when one member is locked aborts drag and leaves all items in position', () => {
       const gId = 'locked-companion-group';
       const el1 = { id: 'lc-unlocked', type: 'rect', x: 10, y: 10, zIndex: 1, updatedAt: 1, groupId: gId } as CanvasElement;
       const el2 = { id: 'lc-locked', type: 'rect', x: 50, y: 50, zIndex: 2, updatedAt: 1, groupId: gId, locked: true } as CanvasElement;
       harness.setElements([el1, el2], 'remote');
 
-      executeGroupDrag('lc-unlocked', 40, 30, harness.getElements(), ['lc-unlocked', 'lc-locked']);
+      const moved = executeGroupDrag('lc-unlocked', 40, 30, harness.getElements(), ['lc-unlocked', 'lc-locked']);
 
-      expect(harness.getElement('lc-unlocked')!.x).toBe(50);
-      expect(harness.getElement('lc-unlocked')!.y).toBe(40);
-      // Locked item remains untouched
+      expect(moved).toHaveLength(0);
+      // Both elements remain untouched in their original positions (no fracturing)
+      expect(harness.getElement('lc-unlocked')!.x).toBe(10);
+      expect(harness.getElement('lc-unlocked')!.y).toBe(10);
       expect(harness.getElement('lc-locked')!.x).toBe(50);
       expect(harness.getElement('lc-locked')!.y).toBe(50);
     });
