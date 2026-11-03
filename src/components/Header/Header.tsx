@@ -23,6 +23,8 @@ import {
   FileCode,
   Image as ImageIcon,
   CheckCircle2,
+  LayoutTemplate,
+  Magnet,
 } from 'lucide-react';
 import Konva from 'konva';
 import { GridType, CanvasElement, Collaborator, ThemeMode } from '../../types/whiteboard';
@@ -58,6 +60,11 @@ interface HeaderProps {
   stageRef: React.RefObject<Konva.Stage | null>;
   elements: CanvasElement[];
   onImportElements: (elements: CanvasElement[]) => void;
+  onOpenTemplates?: () => void;
+  snapToObjects?: boolean;
+  onToggleSnapToObjects?: () => void;
+  followingClientId?: number | null;
+  onFollowCollaborator?: (clientId: number | null) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -83,6 +90,11 @@ export const Header: React.FC<HeaderProps> = ({
   stageRef,
   elements,
   onImportElements,
+  onOpenTemplates,
+  snapToObjects,
+  onToggleSnapToObjects,
+  followingClientId,
+  onFollowCollaborator,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
@@ -373,22 +385,65 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
 
             {/* Remote Collaborators Avatars */}
-            {collaborators.map((collab) => (
-              <div
-                key={collab.clientId}
-                className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ring-2 ring-slate-900 shadow-sm"
-                style={{ backgroundColor: collab.color }}
-                title={`${collab.name} (Online)`}
-              >
-                {collab.name.charAt(0).toUpperCase()}
-              </div>
-            ))}
+            {collaborators.map((collab) => {
+              const isFollowing = followingClientId === collab.clientId;
+              return (
+                <button
+                  key={collab.clientId}
+                  onClick={() => onFollowCollaborator?.(isFollowing ? null : collab.clientId)}
+                  className={`relative group w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white ring-2 transition-transform hover:scale-125 ${
+                    isFollowing ? 'ring-emerald-400 scale-110 shadow-lg' : 'ring-slate-900 shadow-sm'
+                  }`}
+                  style={{ backgroundColor: collab.color }}
+                  title={`${collab.name} ${isFollowing ? '(Following - Click to stop)' : '(Click to follow view)'}`}
+                >
+                  {collab.name.charAt(0).toUpperCase()}
+                  {isFollowing && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
       {/* Right: History, Grid, Theme, Export & Help */}
       <div className="flex items-center gap-2">
+        {/* Templates Picker Button */}
+        {onOpenTemplates && (
+          <button
+            onClick={onOpenTemplates}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-xl border transition-all ${
+              isDark
+                ? 'bg-slate-800/80 border-slate-700/60 text-slate-300 hover:text-white hover:bg-slate-700'
+                : 'bg-slate-100 border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-200'
+            }`}
+            title="Browse Starter Templates"
+          >
+            <LayoutTemplate className="w-3.5 h-3.5 text-indigo-500" />
+            <span className="hidden md:inline">Templates</span>
+          </button>
+        )}
+
+        {/* Snap to Objects Toggle */}
+        {onToggleSnapToObjects && (
+          <button
+            onClick={onToggleSnapToObjects}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-xl border transition-all ${
+              snapToObjects
+                ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-400'
+                : isDark
+                ? 'bg-slate-800/80 border-slate-700/60 text-slate-400 hover:text-slate-200'
+                : 'bg-slate-100 border-slate-200 text-slate-500 hover:text-slate-800'
+            }`}
+            title="Toggle Smart Snapping Guides"
+          >
+            <Magnet className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Snap</span>
+          </button>
+        )}
+
         {/* Undo / Redo */}
         <div
           className={`flex items-center rounded-xl p-0.5 border ${

@@ -151,6 +151,14 @@ export function useWhiteboard() {
     whiteboardService.updateCursor(pos);
   }, []);
 
+  const updateViewport = useCallback((viewport: { x: number; y: number; scale: number }) => {
+    whiteboardService.updateViewport(viewport);
+  }, []);
+
+  const updateLaserTrail = useCallback((trail: { points: number[]; color: string; timestamp: number } | null) => {
+    whiteboardService.updateLaserTrail(trail);
+  }, []);
+
   const updateUserName = useCallback((name: string) => {
     whiteboardService.updateUserName(name);
   }, []);
@@ -184,6 +192,8 @@ export function useWhiteboard() {
     undo,
     redo,
     updateCursor,
+    updateViewport,
+    updateLaserTrail,
     updateUserName,
     isBoardInitialized: () => whiteboardService.isBoardInitialized(),
     setBoardInitialized: (val?: boolean) => whiteboardService.setBoardInitialized(val),

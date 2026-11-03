@@ -1,5 +1,5 @@
 import React from 'react';
-import { Line, Rect, Circle, Arrow } from 'react-konva';
+import { Line, Rect, Circle, Arrow, Group, Text as KonvaText } from 'react-konva';
 import { CanvasElement } from '../../types/whiteboard';
 import { StickyNote } from './StickyNote';
 import { TextItem } from './TextItem';
@@ -289,6 +289,57 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
             }
           }}
         />
+      );
+
+    case 'frame':
+      return (
+        <Group
+          id={element.id}
+          x={element.x}
+          y={element.y}
+          draggable={!element.locked}
+          onClick={handleSelect}
+          onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
+          onDragEnd={(e) => {
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
+        >
+          {/* Frame Title Badge Above Boundary */}
+          <Group y={-26}>
+            <Rect
+              width={Math.max(80, (element.title?.length || 5) * 8 + 16)}
+              height={22}
+              fill="#e2e8f0"
+              cornerRadius={[4, 4, 0, 0]}
+            />
+            <KonvaText
+              x={8}
+              y={5}
+              text={element.title || 'Frame'}
+              fontSize={11}
+              fontStyle="bold"
+              fontFamily="Inter, sans-serif"
+              fill="#334155"
+            />
+          </Group>
+
+          {/* Frame Boundary Box */}
+          <Rect
+            width={element.width}
+            height={element.height}
+            fill={element.fill || 'transparent'}
+            stroke={element.stroke || (isSelected ? '#6366f1' : '#94a3b8')}
+            strokeWidth={element.strokeWidth || (isSelected ? 2 : 1.5)}
+            dash={[6, 4]}
+            cornerRadius={4}
+          />
+        </Group>
       );
 
     default:

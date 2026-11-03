@@ -8,7 +8,10 @@ import { Header } from './components/Header/Header';
 import { ShortcutsModal } from './components/Modals/ShortcutsModal';
 import { EmojiPickerPopover } from './components/Modals/EmojiPickerPopover';
 import { CommentThreadModal } from './components/Modals/CommentThreadModal';
+import { TemplatesModal } from './components/Modals/TemplatesModal';
+import { Minimap } from './components/Canvas/Minimap';
 import { ToolType, ToolProperties, GridType, CanvasElement, ThemeMode } from './types/whiteboard';
+import { alignElements, distributeElements, generateStarterTemplate } from './utils/canvasTools';
 
 /**
  * scribblboard Root Application Component
@@ -43,6 +46,8 @@ export function App() {
     undo,
     redo,
     updateCursor,
+    updateViewport,
+    updateLaserTrail,
     updateUserName,
     isBoardInitialized,
     setBoardInitialized,
@@ -82,9 +87,19 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [gridType, setGridType] = useState<GridType>('dots');
   const [isShortcutsOpen, setIsShortcutsOpen] = useState<boolean>(false);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState<boolean>(false);
+  const [snapToObjects, setSnapToObjects] = useState<boolean>(true);
+  const [followingClientId, setFollowingClientId] = useState<number | null>(null);
   const [clipboard, setClipboard] = useState<CanvasElement[]>([]);
   const [activeCommentElementId, setActiveCommentElementId] = useState<string | null>(null);
   const [activeEmojiPicker, setActiveEmojiPicker] = useState<{ elementId: string; position: { x: number; y: number } } | null>(null);
+  const [canvasViewport, setCanvasViewport] = useState<{ x: number; y: number; width: number; height: number; scale: number }>({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scale: 1,
+  });
 
   const [toolProperties, setToolProperties] = useState<ToolProperties>({
     strokeColor: '#6366f1',
@@ -464,6 +479,12 @@ export function App() {
           case 'e':
             setCurrentTool('eraser');
             break;
+          case 'f':
+            setCurrentTool('frame');
+            break;
+          case 'k':
+            setCurrentTool('laser');
+            break;
           case '?':
             setIsShortcutsOpen((prev) => !prev);
             break;
@@ -613,6 +634,11 @@ export function App() {
         stageRef={stageRef}
         elements={elements}
         onImportElements={(imported) => setBatchElements(imported)}
+        onOpenTemplates={() => setIsTemplatesOpen(true)}
+        snapToObjects={snapToObjects}
+        onToggleSnapToObjects={() => setSnapToObjects((prev) => !prev)}
+        followingClientId={followingClientId}
+        onFollowCollaborator={(clientId) => setFollowingClientId(clientId)}
       />
 
       {/* Property Bar for Contextual Styling */}
@@ -629,6 +655,14 @@ export function App() {
         onToggleLockSelected={handleToggleLock}
         onGroupSelected={handleGroupSelected}
         onUngroupSelected={handleUngroupSelected}
+        onAlignSelected={(alignment) => {
+          const aligned = alignElements(selectedElements, alignment);
+          setBatchElements(aligned);
+        }}
+        onDistributeSelected={(direction) => {
+          const distributed = distributeElements(selectedElements, direction);
+          setBatchElements(distributed);
+        }}
         onOpenEmojiPicker={(elementId, position) => setActiveEmojiPicker({ elementId, position })}
         onOpenComments={(elementId) => setActiveCommentElementId(elementId)}
         commentCount={selectedCommentCount}
@@ -659,9 +693,31 @@ export function App() {
         onPasteElements={handlePaste}
         collaborators={collaborators}
         onUpdateCursor={updateCursor}
+        onUpdateViewport={(vp) => {
+          setCanvasViewport((prev) => ({ ...prev, ...vp }));
+          updateViewport(vp);
+        }}
+        onUpdateLaserTrail={updateLaserTrail}
+        snapToObjects={snapToObjects}
+        followingClientId={followingClientId}
+        onBreakFollow={() => setFollowingClientId(null)}
         onToggleReaction={toggleReaction}
         onOpenEmojiPicker={(elementId, position) => setActiveEmojiPicker({ elementId, position })}
         onOpenComments={(elementId) => setActiveCommentElementId(elementId)}
+      />
+
+      {/* Radar Minimap */}
+      <Minimap
+        elements={elements}
+        viewport={canvasViewport}
+        onNavigate={(newVp) => {
+          if (stageRef.current) {
+            stageRef.current.position(newVp);
+            stageRef.current.batchDraw();
+            setCanvasViewport((prev) => ({ ...prev, ...newVp }));
+          }
+        }}
+        theme={theme}
       />
 
       {/* Main Toolbar */}
@@ -676,6 +732,21 @@ export function App() {
       <ShortcutsModal
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
+      />
+
+      {/* Starter Templates Modal */}
+      <TemplatesModal
+        isOpen={isTemplatesOpen}
+        onClose={() => setIsTemplatesOpen(false)}
+        onSelectTemplate={(tplType) => {
+          const center = {
+            x: -canvasViewport.x / canvasViewport.scale + (canvasViewport.width / 2) / canvasViewport.scale,
+            y: -canvasViewport.y / canvasViewport.scale + (canvasViewport.height / 2) / canvasViewport.scale,
+          };
+          const tplElements = generateStarterTemplate(tplType, center);
+          setBatchElements(tplElements);
+        }}
+        theme={theme}
       />
 
       {/* Emoji Picker Popover */}

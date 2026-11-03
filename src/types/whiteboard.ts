@@ -8,7 +8,9 @@ export type ToolType =
   | 'line'
   | 'sticky'
   | 'text'
-  | 'eraser';
+  | 'eraser'
+  | 'frame'
+  | 'laser';
 
 export type StickyColor = 'yellow' | 'pink' | 'blue' | 'green' | 'purple' | 'orange';
 export type ThemeMode = 'dark' | 'light';
@@ -132,6 +134,26 @@ export interface ImageElement extends BaseElement {
   height: number;
 }
 
+export interface FrameElement extends BaseElement {
+  type: 'frame';
+  title: string;
+  width: number;
+  height: number;
+  fill?: string;
+  stroke?: string;
+  strokeWidth?: number;
+}
+
+export type AlignmentType = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+export type DistributionType = 'horizontal' | 'vertical';
+
+export interface LaserPoint {
+  x: number;
+  y: number;
+  color: string;
+  timestamp: number;
+}
+
 export type CanvasElement =
   | PenElement
   | RectElement
@@ -140,7 +162,8 @@ export type CanvasElement =
   | LineElement
   | StickyElement
   | TextElement
-  | ImageElement;
+  | ImageElement
+  | FrameElement;
 
 export interface ToolProperties {
   strokeColor: string;
@@ -159,6 +182,16 @@ export interface Collaborator {
   cursor?: {
     x: number;
     y: number;
+  };
+  viewport?: {
+    x: number;
+    y: number;
+    scale: number;
+  };
+  laserTrail?: {
+    points: number[];
+    color: string;
+    timestamp: number;
   };
 }
 

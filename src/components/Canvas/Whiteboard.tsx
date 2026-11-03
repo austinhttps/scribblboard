@@ -14,6 +14,11 @@ import {
   findNearestConnectorPoint,
   updateAttachedConnectors,
 } from '../../utils/connectorUtils';
+import {
+  calculateSnapping,
+  computeElementBounds,
+  moveFrameWithChildren,
+} from '../../utils/canvasTools';
 
 interface WhiteboardProps {
   elements: CanvasElement[];
@@ -39,6 +44,11 @@ interface WhiteboardProps {
   onPasteElements: (point?: { x: number; y: number }) => void;
   collaborators: Collaborator[];
   onUpdateCursor: (pos: { x: number; y: number } | null) => void;
+  onUpdateViewport?: (viewport: { x: number; y: number; scale: number }) => void;
+  onUpdateLaserTrail?: (trail: { points: number[]; color: string; timestamp: number } | null) => void;
+  snapToObjects?: boolean;
+  followingClientId?: number | null;
+  onBreakFollow?: () => void;
   onToggleReaction: (elementId: string, emoji: string) => void;
   onOpenEmojiPicker: (elementId: string, position: { x: number; y: number }) => void;
   onOpenComments: (elementId: string) => void;
@@ -131,6 +141,11 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   onPasteElements,
   collaborators,
   onUpdateCursor,
+  onUpdateViewport,
+  onUpdateLaserTrail,
+  snapToObjects = true,
+  followingClientId,
+  onBreakFollow,
   onToggleReaction,
   onOpenEmojiPicker,
   onOpenComments,
@@ -157,9 +172,26 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
   // Dynamic alignment guides for smart snapping (Layer 3)
-  const [alignmentGuides] = useState<Array<{ points: number[] }>>([]);
+  const [alignmentGuides, setAlignmentGuides] = useState<Array<{ points: number[] }>>([]);
 
-  // Multi-element & group drag synchronization ref
+  // Local laser pointer trail state
+  const [localLaserTrail, setLocalLaserTrail] = useState<number[]>([]);
+  const laserFadeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Sync stagePos / stageScale with remote leader when following
+  useEffect(() => {
+    if (!followingClientId) return;
+    const leader = collaborators.find((c) => c.clientId === followingClientId);
+    if (leader?.viewport) {
+      setStagePos({ x: leader.viewport.x, y: leader.viewport.y });
+      setStageScale(leader.viewport.scale);
+    }
+  }, [followingClientId, collaborators]);
+
+  // Broadcast viewport updates
+  useEffect(() => {
+    onUpdateViewport?.({ x: stagePos.x, y: stagePos.y, scale: stageScale });
+  }, [stagePos, stageScale, onUpdateViewport]);
   const dragStartPositionsRef = useRef<
     Map<
       string,
@@ -367,6 +399,9 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
     // Spacebar Pan or Hand Tool Pan
     if (isSpacePressed || currentTool === 'pan' || (e.evt as MouseEvent).button === 1) {
+      if (followingClientId && onBreakFollow) {
+        onBreakFollow();
+      }
       setIsPanning(true);
       const pointer = stage.getPointerPosition();
       if (pointer) {
@@ -487,6 +522,21 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         zIndex: nextZ,
         updatedAt: Date.now(),
       });
+    } else if (currentTool === 'frame') {
+      setNewShape({
+        id: crypto.randomUUID(),
+        type: 'frame',
+        title: 'Artboard',
+        x: point.x,
+        y: point.y,
+        width: 1,
+        height: 1,
+        fill: '#f8fafc',
+        stroke: '#cbd5e1',
+        strokeWidth: 2,
+        zIndex: nextZ,
+        updatedAt: Date.now(),
+      } as any);
     } else if (currentTool === 'arrow') {
       setNewShape({
         id: crypto.randomUUID(),
@@ -541,6 +591,18 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       return;
     }
 
+    // Laser pointer tool
+    if (isDrawing.current && currentTool === 'laser') {
+      const newPts = [...localLaserTrail, point.x, point.y];
+      setLocalLaserTrail(newPts);
+      onUpdateLaserTrail?.({
+        points: newPts,
+        color: '#ef4444',
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     // Check connector snap when drawing arrow/line
     if (isDrawing.current && newShape && (newShape.type === 'arrow' || newShape.type === 'line')) {
       const snap = findNearestConnectorPoint(point, elements);
@@ -570,14 +632,14 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         ...newShape,
         points: [...newShape.points, point.x, point.y],
       });
-    } else if (newShape.type === 'rect') {
+    } else if (newShape.type === 'rect' || newShape.type === 'frame') {
       const width = point.x - newShape.x;
       const height = point.y - newShape.y;
       setNewShape({
         ...newShape,
         width,
         height,
-      });
+      } as any);
     } else if (newShape.type === 'circle') {
       const rx = Math.abs(point.x - newShape.x);
       const ry = Math.abs(point.y - newShape.y);
@@ -633,16 +695,27 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       return;
     }
 
+    // End laser drawing
+    if (currentTool === 'laser' && isDrawing.current) {
+      isDrawing.current = false;
+      if (laserFadeTimeoutRef.current) clearTimeout(laserFadeTimeoutRef.current);
+      laserFadeTimeoutRef.current = setTimeout(() => {
+        setLocalLaserTrail([]);
+        onUpdateLaserTrail?.(null);
+      }, 1500);
+      return;
+    }
+
     if (!isDrawing.current || !newShape) return;
     isDrawing.current = false;
 
-    // Normalize rect with negative width/height
+    // Normalize rect or frame with negative width/height
     let finalShape = newShape;
-    if (finalShape.type === 'rect') {
+    if (finalShape.type === 'rect' || finalShape.type === 'frame') {
       let x = finalShape.x;
       let y = finalShape.y;
-      let w = finalShape.width;
-      let h = finalShape.height;
+      let w = (finalShape as any).width;
+      let h = (finalShape as any).height;
 
       if (w < 0) {
         x += w;
@@ -664,7 +737,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         y,
         width: w,
         height: h,
-      };
+      } as any;
     } else if (finalShape.type === 'pen' && finalShape.points.length < 4) {
       setNewShape(null);
       return;
@@ -775,8 +848,36 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     const leaderInitial = dragStartPositionsRef.current.get(id);
     if (!leaderInitial) return;
 
-    const dx = e.target.x() - leaderInitial.nodeInitialPos.x;
-    const dy = e.target.y() - leaderInitial.nodeInitialPos.y;
+    let targetX = e.target.x();
+    let targetY = e.target.y();
+
+    // Smart Snapping & Alignment Guides (if enabled)
+    if (snapToObjects) {
+      const draggedEl = elements.find((item) => item.id === id);
+      if (draggedEl) {
+        const tempEl: CanvasElement = { ...draggedEl, x: targetX, y: targetY };
+        const draggedBounds = computeElementBounds(tempEl);
+        const otherEls = elements.filter(
+          (item) => item.id !== id && !dragStartPositionsRef.current.has(item.id)
+        );
+        const snap = calculateSnapping(draggedBounds, otherEls, 5);
+
+        if (snap.snappedX !== undefined) {
+          targetX = snap.snappedX;
+          e.target.x(targetX);
+        }
+        if (snap.snappedY !== undefined) {
+          targetY = snap.snappedY;
+          e.target.y(targetY);
+        }
+        setAlignmentGuides(snap.guides);
+      }
+    } else {
+      setAlignmentGuides([]);
+    }
+
+    const dx = targetX - leaderInitial.nodeInitialPos.x;
+    const dy = targetY - leaderInitial.nodeInitialPos.y;
 
     dragStartPositionsRef.current.forEach((initial, elId) => {
       if (elId === id) return;
@@ -794,6 +895,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
   // Multi-element & group drag end handler (commits batch atomically via onSetBatchElements)
   const handleElementDragEnd = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
+    setAlignmentGuides([]); // Clear snapping guides on drag end
     const leaderInitial = dragStartPositionsRef.current.get(id);
     if (!leaderInitial) {
       // If drag was aborted/stopped due to a locked element, snap node back and commit nothing
@@ -856,6 +958,16 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         }
       });
     });
+
+    // If dragged element is a Frame, move all its contained child elements by the same delta!
+    const draggedEl = elements.find((el) => el.id === id);
+    if (draggedEl && draggedEl.type === 'frame') {
+      const movedWithChildren = moveFrameWithChildren(draggedEl as any, elements, dx, dy);
+      const childChanges = movedWithChildren.filter(
+        (m) => m.id !== id && !allToBatch.some((b) => b.id === m.id)
+      );
+      allToBatch = [...allToBatch, ...childChanges];
+    }
 
     if (allToBatch.length === 1) {
       onSetElement(allToBatch[0]);
@@ -1596,6 +1708,22 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
         {/* Layer 4: Ephemeral Collaboration Layer (listening={false}) */}
         <Layer id="ephemeral-layer" listening={false}>
+          {/* Local Laser Trail */}
+          {localLaserTrail.length >= 4 && (
+            <KonvaLine
+              points={localLaserTrail}
+              stroke="#ef4444"
+              strokeWidth={4}
+              tension={0.5}
+              lineCap="round"
+              lineJoin="round"
+              shadowColor="#ef4444"
+              shadowBlur={12}
+              shadowOpacity={0.8}
+              listening={false}
+            />
+          )}
+
           <PeerCursors collaborators={collaborators} />
         </Layer>
       </Stage>
@@ -1633,6 +1761,17 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           onToggleLock={handleToggleLock}
           onGroup={handleGroup}
           onUngroup={handleUngroup}
+          onExportFrame={(frameId) => {
+            const frameEl = elements.find((e) => e.id === frameId);
+            if (frameEl && stageRef.current) {
+              exportStageToPNG(stageRef.current, {
+                fileName: `${(frameEl as any).title || 'frame'}.png`,
+                pixelRatio: 2,
+                scope: 'selection',
+                selectedIds: [frameId],
+              });
+            }
+          }}
           onEditItem={() => {
             if (contextMenu.targetElement) {
               const el = contextMenu.targetElement;

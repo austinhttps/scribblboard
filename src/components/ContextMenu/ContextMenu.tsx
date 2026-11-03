@@ -44,6 +44,7 @@ export interface ContextMenuProps {
   onToggleLock?: () => void;
   onGroup?: () => void;
   onUngroup?: () => void;
+  onExportFrame?: (frameId: string) => void;
   onEditItem?: () => void;
   onChangeColor?: (color: string) => void;
   onAddSticky: (point: { x: number; y: number }, color?: StickyColor) => void;
@@ -86,6 +87,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onToggleLock,
   onGroup,
   onUngroup,
+  onExportFrame,
   onEditItem,
   onChangeColor,
   onAddSticky,
@@ -448,6 +450,21 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           </button>
 
           <div className="w-full h-[1px] bg-slate-800 my-1" />
+
+          {/* Frame Export Action */}
+          {targetElement?.type === 'frame' && onExportFrame && (
+            <button
+              onClick={() => {
+                onExportFrame(targetElement.id);
+                onClose();
+              }}
+              className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white transition-all"
+            >
+              <span className="flex items-center gap-2">
+                <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Frame as Image
+              </span>
+            </button>
+          )}
 
           {/* Delete */}
           <button

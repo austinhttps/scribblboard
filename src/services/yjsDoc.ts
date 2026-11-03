@@ -240,6 +240,22 @@ export class WhiteboardService {
   }
 
   /**
+   * Update local viewport coordinates & zoom for presenter follow mode
+   */
+  public updateViewport(viewport: { x: number; y: number; scale: number }): void {
+    if (!this.wsProvider) return;
+    this.wsProvider.awareness.setLocalStateField('viewport', viewport);
+  }
+
+  /**
+   * Broadcast temporary laser trail in awareness without polluting persistent CRDT state
+   */
+  public updateLaserTrail(trail: { points: number[]; color: string; timestamp: number } | null): void {
+    if (!this.wsProvider) return;
+    this.wsProvider.awareness.setLocalStateField('laserTrail', trail);
+  }
+
+  /**
    * Update local user name
    */
   public updateUserName(name: string): void {
@@ -274,6 +290,8 @@ export class WhiteboardService {
           name: state.user.name || 'Collaborator',
           color: state.user.color || '#6366f1',
           cursor: state.cursor || undefined,
+          viewport: state.viewport || undefined,
+          laserTrail: state.laserTrail || undefined,
         });
       }
     });

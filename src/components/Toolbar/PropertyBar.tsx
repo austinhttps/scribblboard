@@ -9,6 +9,14 @@ import {
   Unlock,
   Group,
   Ungroup,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  Columns as DistributeHorizontalIcon,
+  Rows as DistributeVerticalIcon,
 } from 'lucide-react';
 import {
   CanvasElement,
@@ -16,6 +24,8 @@ import {
   ToolProperties,
   StickyColor,
   ThemeMode,
+  AlignmentType,
+  DistributionType,
 } from '../../types/whiteboard';
 
 interface PropertyBarProps {
@@ -31,6 +41,8 @@ interface PropertyBarProps {
   onToggleLockSelected?: () => void;
   onGroupSelected?: () => void;
   onUngroupSelected?: () => void;
+  onAlignSelected?: (alignment: AlignmentType) => void;
+  onDistributeSelected?: (direction: DistributionType) => void;
   onOpenEmojiPicker?: (elementId: string, position: { x: number; y: number }) => void;
   onOpenComments?: (elementId: string) => void;
   commentCount?: number;
@@ -91,6 +103,8 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
   onToggleLockSelected,
   onGroupSelected,
   onUngroupSelected,
+  onAlignSelected,
+  onDistributeSelected,
   onOpenEmojiPicker,
   onOpenComments,
   commentCount = 0,
@@ -192,6 +206,72 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
               <Ungroup className="w-3.5 h-3.5" />
               <span>Ungroup</span>
             </button>
+          )}
+
+          {/* Alignment & Distribution Cluster (When 2+ elements selected) */}
+          {selectedElements.length >= 2 && onAlignSelected && onDistributeSelected && (
+            <div className={`flex items-center gap-1 border-l pl-2 ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
+              <button
+                onClick={() => onAlignSelected('left')}
+                title="Align Left"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('center')}
+                title="Align Center"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignCenter className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('right')}
+                title="Align Right"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('top')}
+                title="Align Top"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignStartVertical className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('middle')}
+                title="Align Middle"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignCenterVertical className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('bottom')}
+                title="Align Bottom"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignEndVertical className="w-3.5 h-3.5" />
+              </button>
+              {selectedElements.length >= 3 && (
+                <>
+                  <button
+                    onClick={() => onDistributeSelected('horizontal')}
+                    title="Distribute Horizontally"
+                    className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+                  >
+                    <DistributeHorizontalIcon className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onDistributeSelected('vertical')}
+                    title="Distribute Vertically"
+                    className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+                  >
+                    <DistributeVerticalIcon className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
           )}
 
           {/* Duplicate Button (disabled when isAllLocked) */}

@@ -12,9 +12,11 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
   const toolsShortcuts = [
     { key: 'V', desc: 'Select & Move Tool' },
     { key: 'H', desc: 'Hand / Pan Tool' },
+    { key: 'K', desc: 'Laser Pointer' },
     { key: 'P', desc: 'Freehand Pen' },
     { key: 'R', desc: 'Rectangle' },
     { key: 'C', desc: 'Circle / Ellipse' },
+    { key: 'F', desc: 'Frame / Artboard' },
     { key: 'A', desc: 'Arrow' },
     { key: 'L', desc: 'Straight Line' },
     { key: 'S', desc: 'Sticky Note' },

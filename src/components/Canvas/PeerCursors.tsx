@@ -1,5 +1,5 @@
 import React from 'react';
-import { Group, Path, Text, Rect } from 'react-konva';
+import { Group, Path, Text, Rect, Line as KonvaLine } from 'react-konva';
 import { Collaborator } from '../../types/whiteboard';
 
 interface PeerCursorsProps {
@@ -9,6 +9,32 @@ interface PeerCursorsProps {
 export const PeerCursors: React.FC<PeerCursorsProps> = ({ collaborators }) => {
   return (
     <Group listening={false}>
+      {/* Remote Laser Trails */}
+      {collaborators.map((collab) => {
+        if (!collab.laserTrail || !collab.laserTrail.points || collab.laserTrail.points.length < 4) return null;
+        const trailAge = Date.now() - (collab.laserTrail.timestamp || 0);
+        if (trailAge > 1500) return null;
+
+        const opacity = Math.max(0, 1 - trailAge / 1500);
+
+        return (
+          <KonvaLine
+            key={`peer-laser-${collab.clientId}`}
+            points={collab.laserTrail.points}
+            stroke={collab.laserTrail.color || '#ef4444'}
+            strokeWidth={4}
+            tension={0.5}
+            lineCap="round"
+            lineJoin="round"
+            shadowColor={collab.laserTrail.color || '#ef4444'}
+            shadowBlur={12}
+            shadowOpacity={0.8 * opacity}
+            opacity={opacity}
+            listening={false}
+          />
+        );
+      })}
+
       {collaborators.map((collab) => {
         if (!collab.cursor) return null;
 
