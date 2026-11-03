@@ -11,7 +11,7 @@ import { CommentThreadModal } from './components/Modals/CommentThreadModal';
 import { ToolType, ToolProperties, GridType, CanvasElement, ThemeMode } from './types/whiteboard';
 
 /**
- * CollabBoard Root Application Component
+ * scribblboard Root Application Component
  * 
  * Manages active canvas tools, contextual property bar options,
  * selection states, clipboard, peer awareness, theme mode, and binds UI interactions to the Yjs CRDT store.
