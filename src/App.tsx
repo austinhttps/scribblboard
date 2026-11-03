@@ -8,7 +8,10 @@ import { Header } from './components/Header/Header';
 import { ShortcutsModal } from './components/Modals/ShortcutsModal';
 import { EmojiPickerPopover } from './components/Modals/EmojiPickerPopover';
 import { CommentThreadModal } from './components/Modals/CommentThreadModal';
+import { TemplatesModal } from './components/Modals/TemplatesModal';
+import { Minimap } from './components/Canvas/Minimap';
 import { ToolType, ToolProperties, GridType, CanvasElement, ThemeMode } from './types/whiteboard';
+import { alignElements, distributeElements, generateStarterTemplate } from './utils/canvasTools';
 
 /**
  * scribblboard Root Application Component
@@ -43,6 +46,8 @@ export function App() {
     undo,
     redo,
     updateCursor,
+    updateViewport,
+    updateLaserTrail,
     updateUserName,
     isBoardInitialized,
     setBoardInitialized,
@@ -82,9 +87,19 @@ export function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [gridType, setGridType] = useState<GridType>('dots');
   const [isShortcutsOpen, setIsShortcutsOpen] = useState<boolean>(false);
+  const [isTemplatesOpen, setIsTemplatesOpen] = useState<boolean>(false);
+  const [snapToObjects, setSnapToObjects] = useState<boolean>(true);
+  const [followingClientId, setFollowingClientId] = useState<number | null>(null);
   const [clipboard, setClipboard] = useState<CanvasElement[]>([]);
   const [activeCommentElementId, setActiveCommentElementId] = useState<string | null>(null);
   const [activeEmojiPicker, setActiveEmojiPicker] = useState<{ elementId: string; position: { x: number; y: number } } | null>(null);
+  const [canvasViewport, setCanvasViewport] = useState<{ x: number; y: number; width: number; height: number; scale: number }>({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scale: 1,
+  });
 
   const [toolProperties, setToolProperties] = useState<ToolProperties>({
     strokeColor: '#6366f1',
@@ -153,6 +168,68 @@ export function App() {
   // Selected elements list
   const selectedElements = elements.filter((el) => selectedIds.includes(el.id));
 
+  // Toggle lock status on selected elements (Ctrl+L / Cmd+L)
+  const handleToggleLock = useCallback(() => {
+    if (selectedElements.length === 0) return;
+
+    // If any selected item is unlocked, lock all; otherwise unlock all
+    const anyUnlocked = selectedElements.some((el) => !el.locked);
+    const targetLocked = anyUnlocked;
+
+    const updatedElements: CanvasElement[] = selectedElements.map((el) => {
+      const clone = { ...el, updatedAt: Date.now() };
+      if (targetLocked) {
+        clone.locked = true;
+      } else {
+        delete clone.locked;
+      }
+      return clone as CanvasElement;
+    });
+
+    setBatchElements(updatedElements);
+  }, [selectedElements, setBatchElements]);
+
+  // Group selected elements into a single logical group (Ctrl+G / Cmd+G)
+  const handleGroupSelected = useCallback(() => {
+    if (selectedElements.length < 2) return;
+
+    const newGroupId = crypto.randomUUID();
+    const updatedElements: CanvasElement[] = selectedElements.map((el) => ({
+      ...el,
+      groupId: newGroupId,
+      updatedAt: Date.now(),
+    } as CanvasElement));
+
+    setBatchElements(updatedElements);
+  }, [selectedElements, setBatchElements]);
+
+  // Ungroup selected elements (Ctrl+Shift+G / Cmd+Shift+G)
+  const handleUngroupSelected = useCallback(() => {
+    if (selectedElements.length === 0) return;
+
+    // Collect all group IDs present among selected items
+    const groupIdsToClear = new Set(
+      selectedElements
+        .map((el) => el.groupId)
+        .filter((gid): gid is string => Boolean(gid))
+    );
+
+    if (groupIdsToClear.size === 0) return;
+
+    // Clear groupId for all elements in the board belonging to these groups
+    const elementsToUpdate = elements
+      .filter((el) => el.groupId && groupIdsToClear.has(el.groupId))
+      .map((el) => {
+        const clone = { ...el, updatedAt: Date.now() };
+        delete clone.groupId;
+        return clone as CanvasElement;
+      });
+
+    if (elementsToUpdate.length > 0) {
+      setBatchElements(elementsToUpdate);
+    }
+  }, [elements, selectedElements, setBatchElements]);
+
   // Copy elements to clipboard
   const handleCopy = useCallback(() => {
     if (selectedElements.length > 0) {
@@ -160,14 +237,21 @@ export function App() {
     }
   }, [selectedElements]);
 
-  // Cut elements
+  // Cut elements (only unlocked elements are cut and deleted; locked elements remain on canvas)
   const handleCut = useCallback(() => {
     if (selectedElements.length > 0) {
+      const unlockedSelected = selectedElements.filter((el) => !el.locked);
+      if (unlockedSelected.length === 0) {
+        // If ALL selected elements are locked, handleCut is a safe no-op
+        return;
+      }
+      // If MIXED (or all unlocked), copy selection to clipboard, but ONLY delete unlocked elements
       setClipboard(selectedElements);
-      deleteElements(selectedIds);
-      setSelectedIds([]);
+      const unlockedIds = unlockedSelected.map((el) => el.id);
+      deleteElements(unlockedIds);
+      setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
     }
-  }, [selectedElements, selectedIds, deleteElements]);
+  }, [selectedElements, deleteElements, setSelectedIds]);
 
   // Paste elements
   const handlePaste = useCallback(
@@ -176,6 +260,14 @@ export function App() {
 
       const newElements: CanvasElement[] = [];
       const newIds: string[] = [];
+
+      // Remap group IDs so pasted group members form their own distinct group
+      const groupMap = new Map<string, string>();
+      clipboard.forEach((el) => {
+        if (el.groupId && !groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+      });
 
       // Calculate bounding center of copied elements
       let minX = Infinity, minY = Infinity;
@@ -198,9 +290,11 @@ export function App() {
           targetY = point.y + offsetY;
         }
 
+        const newGroupId = el.groupId ? groupMap.get(el.groupId) : undefined;
         newElements.push({
           ...el,
           id: newId,
+          groupId: newGroupId,
           x: targetX,
           y: targetY,
           zIndex: getNextZIndex(),
@@ -208,24 +302,80 @@ export function App() {
         });
       });
 
-      newElements.forEach((item) => setElement(item));
+      setBatchElements(newElements);
       setSelectedIds(newIds);
     },
-    [clipboard, getNextZIndex, setElement]
+    [clipboard, getNextZIndex, setBatchElements]
   );
 
-  // Global hotkeys for tools & clipboard
+  // Duplicate selected (only unlocked elements are duplicated; locked elements are shielded)
+  const handleDuplicateSelected = useCallback(() => {
+    const targetList = selectedElements.filter((el) => !el.locked);
+    if (targetList.length === 0) return;
+
+    const duplicates: CanvasElement[] = [];
+    const newIds: string[] = [];
+    const groupMap = new Map<string, string>();
+
+    targetList.forEach((el) => {
+      const newId = crypto.randomUUID();
+      newIds.push(newId);
+
+      let newGroupId = el.groupId;
+      if (el.groupId) {
+        if (!groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+        newGroupId = groupMap.get(el.groupId);
+      }
+
+      duplicates.push({
+        ...el,
+        id: newId,
+        groupId: newGroupId,
+        x: el.x + 30,
+        y: el.y + 30,
+        zIndex: getNextZIndex(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    setBatchElements(duplicates);
+    setSelectedIds(newIds);
+  }, [selectedElements, getNextZIndex, setBatchElements]);
+
+  // Global hotkeys for tools, locking, grouping, clipboard & actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+      // Guard against typing in input fields, textareas, or contenteditable elements
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+          target.isContentEditable ||
+          target.getAttribute('contenteditable') === 'true')
+      ) {
+        return;
+      }
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (
+        activeEl &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) ||
+          activeEl.isContentEditable ||
+          activeEl.getAttribute('contenteditable') === 'true')
+      ) {
         return;
       }
 
-      // Delete / Backspace key
+      // Delete / Backspace key (strictly delete only unlocked elements)
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         e.preventDefault();
-        deleteElements(selectedIds);
-        setSelectedIds([]);
+        const unlockedSelected = selectedElements.filter((el) => !el.locked);
+        if (unlockedSelected.length > 0) {
+          const unlockedIds = unlockedSelected.map((el) => el.id);
+          deleteElements(unlockedIds);
+          setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
+        }
         return;
       }
 
@@ -270,48 +420,96 @@ export function App() {
           return;
         }
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedIds.length > 0) {
+        e.preventDefault();
+        handleDuplicateSelected();
+        return;
+      }
 
-      // Tool selection shortcuts
-      switch (e.key.toLowerCase()) {
-        case 'v':
-          setCurrentTool('select');
-          break;
-        case 'h':
-          setCurrentTool('pan');
-          break;
-        case 'p':
-          setCurrentTool('pen');
-          break;
-        case 'r':
-          setCurrentTool('rect');
-          break;
-        case 'c':
-          setCurrentTool('circle');
-          break;
-        case 'a':
-          setCurrentTool('arrow');
-          break;
-        case 'l':
-          setCurrentTool('line');
-          break;
-        case 's':
-          setCurrentTool('sticky');
-          break;
-        case 't':
-          setCurrentTool('text');
-          break;
-        case 'e':
-          setCurrentTool('eraser');
-          break;
-        case '?':
-          setIsShortcutsOpen((prev) => !prev);
-          break;
+      // Object Locking (Ctrl+L / Cmd+L)
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        if (selectedIds.length > 0) {
+          handleToggleLock();
+        }
+        return;
+      }
+
+      // Grouping (Ctrl+G / Cmd+G) and Ungrouping (Ctrl+Shift+G / Cmd+Shift+G)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleUngroupSelected();
+        } else if (selectedIds.length >= 2) {
+          handleGroupSelected();
+        }
+        return;
+      }
+
+      // Tool selection shortcuts (ONLY when no modifier keys are held)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 'v':
+            setCurrentTool('select');
+            break;
+          case 'h':
+            setCurrentTool('pan');
+            break;
+          case 'p':
+            setCurrentTool('pen');
+            break;
+          case 'r':
+            setCurrentTool('rect');
+            break;
+          case 'c':
+            setCurrentTool('circle');
+            break;
+          case 'a':
+            setCurrentTool('arrow');
+            break;
+          case 'l':
+            setCurrentTool('line');
+            break;
+          case 's':
+            setCurrentTool('sticky');
+            break;
+          case 't':
+            setCurrentTool('text');
+            break;
+          case 'e':
+            setCurrentTool('eraser');
+            break;
+          case 'f':
+            setCurrentTool('frame');
+            break;
+          case 'k':
+            setCurrentTool('laser');
+            break;
+          case '?':
+            setIsShortcutsOpen((prev) => !prev);
+            break;
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, selectedIds, elements, clipboard, handleCopy, handleCut, handlePaste, deleteElements]);
+  }, [
+    undo,
+    redo,
+    selectedIds,
+    selectedElements,
+    elements,
+    clipboard,
+    handleCopy,
+    handleCut,
+    handlePaste,
+    handleDuplicateSelected,
+    handleToggleLock,
+    handleGroupSelected,
+    handleUngroupSelected,
+    deleteElements,
+  ]);
 
   // Handle image upload from file picker
   const handleUploadImage = useCallback(
@@ -372,35 +570,18 @@ export function App() {
     [selectedElements, setElement]
   );
 
-  // Delete selected
+  // Delete selected (only unlocked elements)
   const handleDeleteSelected = useCallback(() => {
     if (selectedIds.length > 0) {
-      deleteElements(selectedIds);
-      setSelectedIds([]);
+      const unlockedSelected = selectedElements.filter((el) => !el.locked);
+      if (unlockedSelected.length > 0) {
+        const unlockedIds = unlockedSelected.map((el) => el.id);
+        deleteElements(unlockedIds);
+        setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
+      }
     }
-  }, [selectedIds, deleteElements]);
+  }, [selectedIds, selectedElements, deleteElements]);
 
-  // Duplicate selected
-  const handleDuplicateSelected = useCallback(() => {
-    const duplicates: CanvasElement[] = [];
-    const newIds: string[] = [];
-
-    selectedElements.forEach((el) => {
-      const newId = crypto.randomUUID();
-      newIds.push(newId);
-      duplicates.push({
-        ...el,
-        id: newId,
-        x: el.x + 30,
-        y: el.y + 30,
-        zIndex: getNextZIndex(),
-        updatedAt: Date.now(),
-      });
-    });
-
-    duplicates.forEach((dup) => setElement(dup));
-    setSelectedIds(newIds);
-  }, [selectedElements, getNextZIndex, setElement]);
 
   // Reorder layer
   const handleReorderSelected = useCallback(
@@ -453,6 +634,11 @@ export function App() {
         stageRef={stageRef}
         elements={elements}
         onImportElements={(imported) => setBatchElements(imported)}
+        onOpenTemplates={() => setIsTemplatesOpen(true)}
+        snapToObjects={snapToObjects}
+        onToggleSnapToObjects={() => setSnapToObjects((prev) => !prev)}
+        followingClientId={followingClientId}
+        onFollowCollaborator={(clientId) => setFollowingClientId(clientId)}
       />
 
       {/* Property Bar for Contextual Styling */}
@@ -466,6 +652,17 @@ export function App() {
         onDeleteSelected={handleDeleteSelected}
         onDuplicateSelected={handleDuplicateSelected}
         onReorderSelected={handleReorderSelected}
+        onToggleLockSelected={handleToggleLock}
+        onGroupSelected={handleGroupSelected}
+        onUngroupSelected={handleUngroupSelected}
+        onAlignSelected={(alignment) => {
+          const aligned = alignElements(selectedElements, alignment);
+          setBatchElements(aligned);
+        }}
+        onDistributeSelected={(direction) => {
+          const distributed = distributeElements(selectedElements, direction);
+          setBatchElements(distributed);
+        }}
         onOpenEmojiPicker={(elementId, position) => setActiveEmojiPicker({ elementId, position })}
         onOpenComments={(elementId) => setActiveCommentElementId(elementId)}
         commentCount={selectedCommentCount}
@@ -496,9 +693,31 @@ export function App() {
         onPasteElements={handlePaste}
         collaborators={collaborators}
         onUpdateCursor={updateCursor}
+        onUpdateViewport={(vp) => {
+          setCanvasViewport((prev) => ({ ...prev, ...vp }));
+          updateViewport(vp);
+        }}
+        onUpdateLaserTrail={updateLaserTrail}
+        snapToObjects={snapToObjects}
+        followingClientId={followingClientId}
+        onBreakFollow={() => setFollowingClientId(null)}
         onToggleReaction={toggleReaction}
         onOpenEmojiPicker={(elementId, position) => setActiveEmojiPicker({ elementId, position })}
         onOpenComments={(elementId) => setActiveCommentElementId(elementId)}
+      />
+
+      {/* Radar Minimap */}
+      <Minimap
+        elements={elements}
+        viewport={canvasViewport}
+        onNavigate={(newVp) => {
+          if (stageRef.current) {
+            stageRef.current.position(newVp);
+            stageRef.current.batchDraw();
+            setCanvasViewport((prev) => ({ ...prev, ...newVp }));
+          }
+        }}
+        theme={theme}
       />
 
       {/* Main Toolbar */}
@@ -513,6 +732,21 @@ export function App() {
       <ShortcutsModal
         isOpen={isShortcutsOpen}
         onClose={() => setIsShortcutsOpen(false)}
+      />
+
+      {/* Starter Templates Modal */}
+      <TemplatesModal
+        isOpen={isTemplatesOpen}
+        onClose={() => setIsTemplatesOpen(false)}
+        onSelectTemplate={(tplType) => {
+          const center = {
+            x: -canvasViewport.x / canvasViewport.scale + (canvasViewport.width / 2) / canvasViewport.scale,
+            y: -canvasViewport.y / canvasViewport.scale + (canvasViewport.height / 2) / canvasViewport.scale,
+          };
+          const tplElements = generateStarterTemplate(tplType, center);
+          setBatchElements(tplElements);
+        }}
+        theme={theme}
       />
 
       {/* Emoji Picker Popover */}

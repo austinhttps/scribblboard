@@ -21,6 +21,10 @@ import {
   Download,
   Edit3,
   MessageSquare,
+  Lock,
+  Unlock,
+  Group,
+  Ungroup,
 } from 'lucide-react';
 import { CanvasElement, StickyColor } from '../../types/whiteboard';
 
@@ -37,6 +41,10 @@ export interface ContextMenuProps {
   onSendToBack: () => void;
   onBringForward: () => void;
   onSendBackward: () => void;
+  onToggleLock?: () => void;
+  onGroup?: () => void;
+  onUngroup?: () => void;
+  onExportFrame?: (frameId: string) => void;
   onEditItem?: () => void;
   onChangeColor?: (color: string) => void;
   onAddSticky: (point: { x: number; y: number }, color?: StickyColor) => void;
@@ -76,6 +84,10 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onSendToBack,
   onBringForward,
   onSendBackward,
+  onToggleLock,
+  onGroup,
+  onUngroup,
+  onExportFrame,
   onEditItem,
   onChangeColor,
   onAddSticky,
@@ -94,6 +106,14 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const [adjustedPos, setAdjustedPos] = useState<{ top: number; left: number }>({ top: y, left: x });
+
+  // Determine active elements target for context operations
+  const targetItems = selectedElements.length > 0
+    ? selectedElements
+    : (targetElement ? [targetElement] : []);
+  const isAllLocked = targetItems.length > 0 && targetItems.every((el) => el.locked);
+  const canGroup = targetItems.length >= 2;
+  const hasGroup = targetItems.some((el) => !!el.groupId);
 
   // Auto-fit within window boundaries
   useEffect(() => {
@@ -234,6 +254,60 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             </div>
           )}
 
+          {/* Grouping Actions */}
+          {canGroup && onGroup && !isAllLocked && (
+            <button
+              onClick={() => {
+                onGroup();
+                onClose();
+              }}
+              className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            >
+              <span className="flex items-center gap-2">
+                <Group className="w-3.5 h-3.5 text-indigo-400" /> Group Selection
+              </span>
+              <kbd className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">Ctrl+G</kbd>
+            </button>
+          )}
+
+          {hasGroup && onUngroup && !isAllLocked && (
+            <button
+              onClick={() => {
+                onUngroup();
+                onClose();
+              }}
+              className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            >
+              <span className="flex items-center gap-2">
+                <Ungroup className="w-3.5 h-3.5 text-indigo-400" /> Ungroup Selection
+              </span>
+              <kbd className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">Ctrl+Shift+G</kbd>
+            </button>
+          )}
+
+          {/* Lock / Unlock Action */}
+          {onToggleLock && (
+            <button
+              onClick={() => {
+                onToggleLock();
+                onClose();
+              }}
+              className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            >
+              <span className="flex items-center gap-2">
+                {isAllLocked ? (
+                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                ) : (
+                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                )}
+                <span>{isAllLocked ? 'Unlock Selection' : 'Lock Selection'}</span>
+              </span>
+              <kbd className="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">Ctrl+L</kbd>
+            </button>
+          )}
+
+          <div className="w-full h-[1px] bg-slate-800 my-1" />
+
           {/* Clipboard Actions */}
           <button
             onClick={() => {
@@ -250,10 +324,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onCut();
-              onClose();
+              if (!isAllLocked) {
+                onCut();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <Scissors className="w-3.5 h-3.5 text-slate-400" /> Cut
@@ -263,10 +344,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onDuplicate();
-              onClose();
+              if (!isAllLocked) {
+                onDuplicate();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <Layers className="w-3.5 h-3.5 text-indigo-400" /> Duplicate
@@ -283,10 +371,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onBringToFront();
-              onClose();
+              if (!isAllLocked) {
+                onBringToFront();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <ArrowUpToLine className="w-3.5 h-3.5 text-slate-400" /> Bring to Front
@@ -296,10 +391,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onBringForward();
-              onClose();
+              if (!isAllLocked) {
+                onBringForward();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <ArrowUp className="w-3.5 h-3.5 text-slate-400" /> Bring Forward
@@ -309,10 +411,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onSendBackward();
-              onClose();
+              if (!isAllLocked) {
+                onSendBackward();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <ArrowDown className="w-3.5 h-3.5 text-slate-400" /> Send Backward
@@ -322,10 +431,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <button
             onClick={() => {
-              onSendToBack();
-              onClose();
+              if (!isAllLocked) {
+                onSendToBack();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 transition-all text-slate-300 hover:text-white"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-slate-800 text-slate-300 hover:text-white'
+            }`}
           >
             <span className="flex items-center gap-2">
               <ArrowDownToLine className="w-3.5 h-3.5 text-slate-400" /> Send to Back
@@ -335,13 +451,35 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           <div className="w-full h-[1px] bg-slate-800 my-1" />
 
+          {/* Frame Export Action */}
+          {targetElement?.type === 'frame' && onExportFrame && (
+            <button
+              onClick={() => {
+                onExportFrame(targetElement.id);
+                onClose();
+              }}
+              className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white transition-all"
+            >
+              <span className="flex items-center gap-2">
+                <Download className="w-3.5 h-3.5 text-indigo-400" /> Export Frame as Image
+              </span>
+            </button>
+          )}
+
           {/* Delete */}
           <button
             onClick={() => {
-              onDelete();
-              onClose();
+              if (!isAllLocked) {
+                onDelete();
+                onClose();
+              }
             }}
-            className="flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl hover:bg-red-950/50 text-red-400 hover:text-red-300 transition-all"
+            disabled={isAllLocked}
+            className={`flex items-center justify-between w-full px-2.5 py-1.5 text-left rounded-xl transition-all ${
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : 'hover:bg-red-950/50 text-red-400 hover:text-red-300'
+            }`}
           >
             <span className="flex items-center gap-2">
               <Trash2 className="w-3.5 h-3.5" /> Delete

@@ -2,14 +2,27 @@ import { useEffect, useState } from 'react';
 import { Image as KonvaImage } from 'react-konva';
 import { ImageElement } from '../../types/whiteboard';
 
+import Konva from 'konva';
+
 interface URLImageProps {
   element: ImageElement;
   isSelected: boolean;
   onSelect: (e: any) => void;
   onChange: (newAttrs: Partial<ImageElement>) => void;
+  onDragStart?: (e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragMove?: (e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd?: (e: Konva.KonvaEventObject<DragEvent>) => void;
 }
 
-export function URLImage({ element, isSelected: _isSelected, onSelect, onChange }: URLImageProps) {
+export function URLImage({
+  element,
+  isSelected: _isSelected,
+  onSelect,
+  onChange,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: URLImageProps) {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
 
   useEffect(() => {
@@ -30,14 +43,20 @@ export function URLImage({ element, isSelected: _isSelected, onSelect, onChange 
       width={element.width}
       height={element.height}
       rotation={element.rotation || 0}
-      draggable
+      draggable={!element.locked}
       onClick={onSelect}
       onTap={onSelect}
+      onDragStart={onDragStart}
+      onDragMove={onDragMove}
       onDragEnd={(e) => {
-        onChange({
-          x: e.target.x(),
-          y: e.target.y(),
-        });
+        if (onDragEnd) {
+          onDragEnd(e);
+        } else {
+          onChange({
+            x: e.target.x(),
+            y: e.target.y(),
+          });
+        }
       }}
       onTransformEnd={(e) => {
         const node = e.target;

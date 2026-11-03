@@ -14,6 +14,11 @@ import {
   findNearestConnectorPoint,
   updateAttachedConnectors,
 } from '../../utils/connectorUtils';
+import {
+  calculateSnapping,
+  computeElementBounds,
+  moveFrameWithChildren,
+} from '../../utils/canvasTools';
 
 interface WhiteboardProps {
   elements: CanvasElement[];
@@ -39,6 +44,11 @@ interface WhiteboardProps {
   onPasteElements: (point?: { x: number; y: number }) => void;
   collaborators: Collaborator[];
   onUpdateCursor: (pos: { x: number; y: number } | null) => void;
+  onUpdateViewport?: (viewport: { x: number; y: number; scale: number }) => void;
+  onUpdateLaserTrail?: (trail: { points: number[]; color: string; timestamp: number } | null) => void;
+  snapToObjects?: boolean;
+  followingClientId?: number | null;
+  onBreakFollow?: () => void;
   onToggleReaction: (elementId: string, emoji: string) => void;
   onOpenEmojiPicker: (elementId: string, position: { x: number; y: number }) => void;
   onOpenComments: (elementId: string) => void;
@@ -131,6 +141,11 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   onPasteElements,
   collaborators,
   onUpdateCursor,
+  onUpdateViewport,
+  onUpdateLaserTrail,
+  snapToObjects = true,
+  followingClientId,
+  onBreakFollow,
   onToggleReaction,
   onOpenEmojiPicker,
   onOpenComments,
@@ -155,6 +170,44 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
   // Selection box state
   const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+
+  // Dynamic alignment guides for smart snapping (Layer 3)
+  const [alignmentGuides, setAlignmentGuides] = useState<Array<{ points: number[] }>>([]);
+
+  // Local laser pointer trail state
+  const [localLaserTrail, setLocalLaserTrail] = useState<number[]>([]);
+  const laserFadeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Sync stagePos / stageScale with remote leader when following
+  useEffect(() => {
+    if (!followingClientId) return;
+    const leader = collaborators.find((c) => c.clientId === followingClientId);
+    if (leader?.viewport) {
+      setStagePos({ x: leader.viewport.x, y: leader.viewport.y });
+      setStageScale(leader.viewport.scale);
+    }
+  }, [followingClientId, collaborators]);
+
+  // Broadcast viewport updates
+  useEffect(() => {
+    onUpdateViewport?.({ x: stagePos.x, y: stagePos.y, scale: stageScale });
+  }, [stagePos, stageScale, onUpdateViewport]);
+  const dragStartPositionsRef = useRef<
+    Map<
+      string,
+      {
+        id: string;
+        type: string;
+        x: number;
+        y: number;
+        points?: number[];
+        nodeInitialPos: { x: number; y: number };
+      }
+    >
+  >(new Map());
+
+  // Awareness cursor broadcast timestamp ref (throttle to 30ms)
+  const lastCursorBroadcastRef = useRef<number>(0);
 
   // Inline editing overlay
   const [editingItem, setEditingItem] = useState<InlineEditingState | null>(null);
@@ -209,93 +262,14 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     transformerRef.current.getLayer()?.batchDraw();
   }, [selectedIds, elements, currentTool]);
 
-  // Spacebar panning listener & hotkeys
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in textarea, input, or inline editing
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName) || editingItem) {
-        return;
-      }
+  // Check if any selected element is locked
+  const isSelectionLocked = useMemo(() => {
+    return selectedIds.some((id) => {
+      const el = elements.find((e) => e.id === id);
+      return el?.locked === true;
+    });
+  }, [selectedIds, elements]);
 
-      if (e.code === 'Space' && !e.repeat && !isSpacePressed) {
-        setIsSpacePressed(true);
-      }
-
-      // Delete/Backspace
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
-        e.preventDefault();
-        onDeleteElements(selectedIds);
-        setSelectedIds([]);
-      }
-
-      // Escape
-      if (e.key === 'Escape') {
-        setSelectedIds([]);
-        if (editingItem) {
-          commitInlineEdit();
-        }
-        setContextMenu(null);
-        onSetTool('select');
-      }
-
-      // Select all (Ctrl+A / Cmd+A)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-        e.preventDefault();
-        setSelectedIds(elements.map((el) => el.id));
-        onSetTool('select');
-      }
-
-      // Copy (Ctrl+C / Cmd+C)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selectedIds.length > 0) {
-        e.preventDefault();
-        onCopyElements();
-      }
-
-      // Cut (Ctrl+X / Cmd+X)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x' && selectedIds.length > 0) {
-        e.preventDefault();
-        onCutElements();
-      }
-
-      // Layer ordering shortcuts: [ and ]
-      if (e.key === ']' && selectedIds.length > 0) {
-        e.preventDefault();
-        if (e.ctrlKey || e.metaKey) {
-          handleBringToFront();
-        } else {
-          handleBringForward();
-        }
-      }
-      if (e.key === '[' && selectedIds.length > 0) {
-        e.preventDefault();
-        if (e.ctrlKey || e.metaKey) {
-          handleSendToBack();
-        } else {
-          handleSendBackward();
-        }
-      }
-
-      // Duplicate (Ctrl+D / Cmd+D)
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedIds.length > 0) {
-        e.preventDefault();
-        handleDuplicate();
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space') {
-        setIsSpacePressed(false);
-        setIsPanning(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  });
 
   // Focus and select textarea only once when starting to edit a new item
   const prevEditingId = useRef<string | null>(null);
@@ -381,7 +355,11 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       if (id) {
         targetEl = elements.find((el) => el.id === id) || null;
         if (targetEl && !selectedIds.includes(targetEl.id)) {
-          setSelectedIds([targetEl.id]);
+          const targetGroupId = targetEl.groupId;
+          const groupMemberIds = targetGroupId
+            ? elements.filter((el) => el.groupId === targetGroupId).map((el) => el.id)
+            : [targetEl.id];
+          setSelectedIds(groupMemberIds);
         }
       }
     }
@@ -421,6 +399,9 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
     // Spacebar Pan or Hand Tool Pan
     if (isSpacePressed || currentTool === 'pan' || (e.evt as MouseEvent).button === 1) {
+      if (followingClientId && onBreakFollow) {
+        onBreakFollow();
+      }
       setIsPanning(true);
       const pointer = stage.getPointerPosition();
       if (pointer) {
@@ -443,7 +424,10 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
     if (currentTool === 'eraser') {
       if (!clickedOnEmpty && e.target.id()) {
-        onDeleteElement(e.target.id());
+        const el = elements.find((item) => item.id === e.target.id());
+        if (el && !el.locked) {
+          onDeleteElement(el.id);
+        }
       }
       return;
     }
@@ -538,6 +522,21 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         zIndex: nextZ,
         updatedAt: Date.now(),
       });
+    } else if (currentTool === 'frame') {
+      setNewShape({
+        id: crypto.randomUUID(),
+        type: 'frame',
+        title: 'Artboard',
+        x: point.x,
+        y: point.y,
+        width: 1,
+        height: 1,
+        fill: '#f8fafc',
+        stroke: '#cbd5e1',
+        strokeWidth: 2,
+        zIndex: nextZ,
+        updatedAt: Date.now(),
+      } as any);
     } else if (currentTool === 'arrow') {
       setNewShape({
         id: crypto.randomUUID(),
@@ -574,8 +573,12 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
     const point = getCanvasPoint(stage);
 
-    // Broadcast cursor position to collaborators
-    onUpdateCursor(point);
+    // Broadcast cursor position to collaborators (throttled to 30ms)
+    const now = performance.now();
+    if (now - lastCursorBroadcastRef.current >= 30) {
+      lastCursorBroadcastRef.current = now;
+      onUpdateCursor(point);
+    }
 
     if (isPanning) {
       const pointer = stage.getPointerPosition();
@@ -585,6 +588,18 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           y: pointer.y - panStart.y,
         });
       }
+      return;
+    }
+
+    // Laser pointer tool
+    if (isDrawing.current && currentTool === 'laser') {
+      const newPts = [...localLaserTrail, point.x, point.y];
+      setLocalLaserTrail(newPts);
+      onUpdateLaserTrail?.({
+        points: newPts,
+        color: '#ef4444',
+        timestamp: Date.now(),
+      });
       return;
     }
 
@@ -617,14 +632,14 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         ...newShape,
         points: [...newShape.points, point.x, point.y],
       });
-    } else if (newShape.type === 'rect') {
+    } else if (newShape.type === 'rect' || newShape.type === 'frame') {
       const width = point.x - newShape.x;
       const height = point.y - newShape.y;
       setNewShape({
         ...newShape,
         width,
         height,
-      });
+      } as any);
     } else if (newShape.type === 'circle') {
       const rx = Math.abs(point.x - newShape.x);
       const ry = Math.abs(point.y - newShape.y);
@@ -654,7 +669,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
 
       // Only perform box selection if box was actually dragged
       if (Math.abs(x2 - x1) > 3 || Math.abs(y2 - y1) > 3) {
-        const matchedIds: string[] = [];
+        const expandedIds = new Set<string>();
         elements.forEach((el) => {
           const bounds = getElementBounds(el);
           const hasOverlap = !(
@@ -664,26 +679,43 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             bounds.minY > y2
           );
           if (hasOverlap) {
-            matchedIds.push(el.id);
+            if (el.groupId) {
+              elements
+                .filter((e) => e.groupId === el.groupId)
+                .forEach((member) => expandedIds.add(member.id));
+            } else {
+              expandedIds.add(el.id);
+            }
           }
         });
 
-        setSelectedIds(matchedIds);
+        setSelectedIds(Array.from(expandedIds));
       }
       setSelectionBox(null);
+      return;
+    }
+
+    // End laser drawing
+    if (currentTool === 'laser' && isDrawing.current) {
+      isDrawing.current = false;
+      if (laserFadeTimeoutRef.current) clearTimeout(laserFadeTimeoutRef.current);
+      laserFadeTimeoutRef.current = setTimeout(() => {
+        setLocalLaserTrail([]);
+        onUpdateLaserTrail?.(null);
+      }, 1500);
       return;
     }
 
     if (!isDrawing.current || !newShape) return;
     isDrawing.current = false;
 
-    // Normalize rect with negative width/height
+    // Normalize rect or frame with negative width/height
     let finalShape = newShape;
-    if (finalShape.type === 'rect') {
+    if (finalShape.type === 'rect' || finalShape.type === 'frame') {
       let x = finalShape.x;
       let y = finalShape.y;
-      let w = finalShape.width;
-      let h = finalShape.height;
+      let w = (finalShape as any).width;
+      let h = (finalShape as any).height;
 
       if (w < 0) {
         x += w;
@@ -705,7 +737,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         y,
         width: w,
         height: h,
-      };
+      } as any;
     } else if (finalShape.type === 'pen' && finalShape.points.length < 4) {
       setNewShape(null);
       return;
@@ -720,22 +752,230 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   // Element selection handler
   const handleSelectElement = (id: string, e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (currentTool === 'eraser') {
-      onDeleteElement(id);
+      const el = elements.find((item) => item.id === id);
+      if (el && !el.locked) {
+        onDeleteElement(id);
+      }
       return;
     }
 
     if (currentTool !== 'select') return;
 
     const isShiftOrMeta = e.evt.shiftKey || (e.evt as MouseEvent).metaKey || (e.evt as MouseEvent).ctrlKey;
+    const targetEl = elements.find((el) => el.id === id);
+    if (!targetEl) return;
+
+    // Expand to all group members if the element belongs to a group
+    const groupMemberIds = targetEl.groupId
+      ? elements.filter((el) => el.groupId === targetEl.groupId).map((el) => el.id)
+      : [id];
 
     if (isShiftOrMeta) {
-      setSelectedIds((prev) =>
-        prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-      );
+      setSelectedIds((prev) => {
+        const hasAll = groupMemberIds.every((mId) => prev.includes(mId));
+        return hasAll
+          ? prev.filter((item) => !groupMemberIds.includes(item))
+          : Array.from(new Set([...prev, ...groupMemberIds]));
+      });
     } else {
-      // If the clicked item is already part of the selected set, preserve the group selection
-      setSelectedIds((prev) => (prev.includes(id) && prev.length > 1 ? prev : [id]));
+      // Preserve selection if clicking within an already selected multi-element set
+      setSelectedIds((prev) => (prev.includes(id) && prev.length > 1 ? prev : groupMemberIds));
     }
+  };
+
+  // Multi-element & group drag start handler
+  const handleElementDragStart = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
+    const draggedEl = elements.find((el) => el.id === id);
+    if (!draggedEl) return;
+
+    // 1. Determine all participating items in the drag
+    let draggingIds = selectedIds.includes(id) ? [...selectedIds] : [id];
+    if (draggedEl.groupId && !selectedIds.includes(id)) {
+      draggingIds = elements.filter((el) => el.groupId === draggedEl.groupId).map((el) => el.id);
+      setSelectedIds(draggingIds);
+    }
+
+    // 2. Expand group members for ALL elements participating in the drag
+    const groupIdsInDrag = new Set<string>();
+    draggingIds.forEach((elId) => {
+      const el = elements.find((item) => item.id === elId);
+      if (el?.groupId) groupIdsInDrag.add(el.groupId);
+    });
+    if (groupIdsInDrag.size > 0) {
+      const allGroupMemberIds = elements
+        .filter((el) => el.groupId && groupIdsInDrag.has(el.groupId))
+        .map((el) => el.id);
+      draggingIds = Array.from(new Set([...draggingIds, ...allGroupMemberIds]));
+    }
+
+    // 3. If ANY participating element is locked, cancel drag immediately
+    const hasLocked = draggingIds.some((elId) => {
+      const el = elements.find((item) => item.id === elId);
+      return el?.locked === true;
+    });
+
+    if (hasLocked) {
+      e.target.stopDrag();
+      // Snap node back to initial coordinate to eliminate any mousemove offset jitter
+      if (draggedEl.type === 'pen' || draggedEl.type === 'arrow' || draggedEl.type === 'line') {
+        e.target.position({ x: 0, y: 0 });
+      } else {
+        e.target.position({ x: draggedEl.x, y: draggedEl.y });
+      }
+      dragStartPositionsRef.current.clear();
+      return;
+    }
+
+    // 4. Register initial positions for all drag participants
+    dragStartPositionsRef.current.clear();
+    draggingIds.forEach((elId) => {
+      const el = elements.find((item) => item.id === elId);
+      if (!el) return;
+      const node = layerRef.current?.findOne(`#${elId}`) as Konva.Node | undefined;
+      dragStartPositionsRef.current.set(elId, {
+        id: el.id,
+        type: el.type,
+        x: el.x,
+        y: el.y,
+        points: 'points' in el && Array.isArray((el as any).points) ? [...(el as any).points] : undefined,
+        nodeInitialPos: node ? { x: node.x(), y: node.y() } : { x: el.x, y: el.y },
+      });
+    });
+  };
+
+  // Multi-element & group drag move handler (translates companion nodes in real-time)
+  const handleElementDragMove = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
+    const leaderInitial = dragStartPositionsRef.current.get(id);
+    if (!leaderInitial) return;
+
+    let targetX = e.target.x();
+    let targetY = e.target.y();
+
+    // Smart Snapping & Alignment Guides (if enabled)
+    if (snapToObjects) {
+      const draggedEl = elements.find((item) => item.id === id);
+      if (draggedEl) {
+        const tempEl: CanvasElement = { ...draggedEl, x: targetX, y: targetY };
+        const draggedBounds = computeElementBounds(tempEl);
+        const otherEls = elements.filter(
+          (item) => item.id !== id && !dragStartPositionsRef.current.has(item.id)
+        );
+        const snap = calculateSnapping(draggedBounds, otherEls, 5);
+
+        if (snap.snappedX !== undefined) {
+          targetX = snap.snappedX;
+          e.target.x(targetX);
+        }
+        if (snap.snappedY !== undefined) {
+          targetY = snap.snappedY;
+          e.target.y(targetY);
+        }
+        setAlignmentGuides(snap.guides);
+      }
+    } else {
+      setAlignmentGuides([]);
+    }
+
+    const dx = targetX - leaderInitial.nodeInitialPos.x;
+    const dy = targetY - leaderInitial.nodeInitialPos.y;
+
+    dragStartPositionsRef.current.forEach((initial, elId) => {
+      if (elId === id) return;
+      const node = layerRef.current?.findOne(`#${elId}`) as Konva.Node | undefined;
+      if (node) {
+        node.position({
+          x: initial.nodeInitialPos.x + dx,
+          y: initial.nodeInitialPos.y + dy,
+        });
+      }
+    });
+
+    layerRef.current?.batchDraw();
+  };
+
+  // Multi-element & group drag end handler (commits batch atomically via onSetBatchElements)
+  const handleElementDragEnd = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
+    setAlignmentGuides([]); // Clear snapping guides on drag end
+    const leaderInitial = dragStartPositionsRef.current.get(id);
+    if (!leaderInitial) {
+      // If drag was aborted/stopped due to a locked element, snap node back and commit nothing
+      const el = elements.find((item) => item.id === id);
+      if (el) {
+        if (el.type === 'pen' || el.type === 'arrow' || el.type === 'line') {
+          e.target.position({ x: 0, y: 0 });
+        } else {
+          e.target.position({ x: el.x, y: el.y });
+        }
+      }
+      return;
+    }
+
+    const dx = e.target.x() - leaderInitial.nodeInitialPos.x;
+    const dy = e.target.y() - leaderInitial.nodeInitialPos.y;
+
+    if (dx === 0 && dy === 0) {
+      dragStartPositionsRef.current.clear();
+      return;
+    }
+
+    const updatedElements: CanvasElement[] = [];
+
+    dragStartPositionsRef.current.forEach((initial, elId) => {
+      const el = elements.find((item) => item.id === elId);
+      if (!el) return;
+
+      if (el.type === 'pen' || el.type === 'arrow' || el.type === 'line') {
+        const updatedPoints = (initial.points || []).map((p, i) =>
+          i % 2 === 0 ? p + dx : p + dy
+        );
+        const node = layerRef.current?.findOne(`#${elId}`) as Konva.Node | undefined;
+        node?.position({ x: 0, y: 0 }); // reset node offset
+        updatedElements.push({
+          ...el,
+          points: updatedPoints,
+          updatedAt: Date.now(),
+        } as CanvasElement);
+      } else {
+        updatedElements.push({
+          ...el,
+          x: initial.x + dx,
+          y: initial.y + dy,
+          updatedAt: Date.now(),
+        } as CanvasElement);
+      }
+    });
+
+    // Update attached connectors for all moved elements
+    let allToBatch = [...updatedElements];
+    updatedElements.forEach((el) => {
+      const attached = updateAttachedConnectors(el, elements);
+      attached.forEach((att) => {
+        const existingIdx = allToBatch.findIndex((b) => b.id === att.id);
+        if (existingIdx >= 0) {
+          allToBatch[existingIdx] = att;
+        } else {
+          allToBatch.push(att);
+        }
+      });
+    });
+
+    // If dragged element is a Frame, move all its contained child elements by the same delta!
+    const draggedEl = elements.find((el) => el.id === id);
+    if (draggedEl && draggedEl.type === 'frame') {
+      const movedWithChildren = moveFrameWithChildren(draggedEl as any, elements, dx, dy);
+      const childChanges = movedWithChildren.filter(
+        (m) => m.id !== id && !allToBatch.some((b) => b.id === m.id)
+      );
+      allToBatch = [...allToBatch, ...childChanges];
+    }
+
+    if (allToBatch.length === 1) {
+      onSetElement(allToBatch[0]);
+    } else if (allToBatch.length > 1) {
+      onSetBatchElements(allToBatch);
+    }
+
+    dragStartPositionsRef.current.clear();
   };
 
   // Element attribute update (drag/transform) + connector auto-updates!
@@ -814,16 +1054,31 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   const selectedElements = elements.filter((el) => selectedIds.includes(el.id));
 
   const handleDuplicate = () => {
-    const targetList = selectedElements.length > 0 ? selectedElements : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    const rawList = selectedElements.length > 0 ? selectedElements : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    // Filter out locked elements: if all are locked, do not duplicate; if mixed, duplicate only unlocked elements
+    const targetList = rawList.filter((el) => !el.locked);
+    if (targetList.length === 0) return;
+
     const duplicates: CanvasElement[] = [];
     const newIds: string[] = [];
+    const groupMap = new Map<string, string>();
 
     targetList.forEach((el) => {
       const newId = crypto.randomUUID();
       newIds.push(newId);
+
+      let newGroupId = el.groupId;
+      if (el.groupId) {
+        if (!groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+        newGroupId = groupMap.get(el.groupId);
+      }
+
       duplicates.push({
         ...el,
         id: newId,
+        groupId: newGroupId,
         x: el.x + 30,
         y: el.y + 30,
         zIndex: getNextZIndex(),
@@ -831,18 +1086,106 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       });
     });
 
-    duplicates.forEach((dup) => onSetElement(dup));
+    onSetBatchElements(duplicates);
     setSelectedIds(newIds);
+  };
+
+  const handleCut = () => {
+    const hasUnlocked = selectedIds.some((id) => !elements.find((el) => el.id === id)?.locked);
+    if (hasUnlocked) {
+      onCutElements();
+    }
   };
 
   const handleDelete = () => {
     if (selectedIds.length > 0) {
-      onDeleteElements(selectedIds);
-      setSelectedIds([]);
-    } else if (contextMenu?.targetElement) {
+      const deletableIds = selectedIds.filter((id) => !elements.find((el) => el.id === id)?.locked);
+      if (deletableIds.length > 0) {
+        onDeleteElements(deletableIds);
+        setSelectedIds((prev) => prev.filter((id) => !deletableIds.includes(id)));
+      }
+    } else if (contextMenu?.targetElement && !contextMenu.targetElement.locked) {
       onDeleteElement(contextMenu.targetElement.id);
     }
   };
+
+  // Toggle Lock on Selection or Target
+  const handleToggleLock = useCallback(() => {
+    const targetList = selectedElements.length > 0
+      ? selectedElements
+      : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    if (targetList.length === 0) return;
+    const isAllLocked = targetList.every((el) => el.locked);
+    const updated = targetList.map((el) => {
+      const clone = { ...el, updatedAt: Date.now() };
+      if (!isAllLocked) {
+        clone.locked = true;
+      } else {
+        delete clone.locked;
+      }
+      return clone as CanvasElement;
+    });
+    onSetBatchElements(updated);
+  }, [selectedElements, contextMenu, onSetBatchElements]);
+
+  // Group Selection or Target
+  const handleGroup = useCallback(() => {
+    const targetList = selectedElements.length > 0
+      ? selectedElements
+      : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    if (targetList.length < 2) return;
+    const newGroupId = crypto.randomUUID();
+    const updated = targetList.map((el) => ({
+      ...el,
+      groupId: newGroupId,
+      updatedAt: Date.now(),
+    } as CanvasElement));
+    onSetBatchElements(updated);
+    setSelectedIds(updated.map((el) => el.id));
+  }, [selectedElements, contextMenu, onSetBatchElements, setSelectedIds]);
+
+  // Ungroup Selection or Target
+  const handleUngroup = useCallback(() => {
+    const targetList = selectedElements.length > 0
+      ? selectedElements
+      : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    const groupIdsToClear = new Set(
+      targetList
+        .map((el) => el.groupId)
+        .filter((gid): gid is string => Boolean(gid))
+    );
+    if (groupIdsToClear.size === 0) return;
+    const updated = elements
+      .filter((el) => el.groupId && groupIdsToClear.has(el.groupId))
+      .map((el) => {
+        const clone = { ...el, updatedAt: Date.now() };
+        delete clone.groupId;
+        return clone as CanvasElement;
+      });
+    if (updated.length > 0) {
+      onSetBatchElements(updated);
+    }
+  }, [elements, selectedElements, contextMenu, onSetBatchElements]);
+
+  // Click-to-Unlock Single Element (Group-Aware)
+  const handleUnlockElement = useCallback((elementId: string) => {
+    const el = elements.find((item) => item.id === elementId);
+    if (!el) return;
+    if (el.groupId) {
+      const groupMembers = elements.filter((item) => item.groupId === el.groupId);
+      onSetBatchElements(
+        groupMembers.map((item) => {
+          const clone = { ...item, updatedAt: Date.now() };
+          delete clone.locked;
+          return clone as CanvasElement;
+        })
+      );
+    } else {
+      const clone = { ...el, updatedAt: Date.now() };
+      delete clone.locked;
+      onSetElement(clone as CanvasElement);
+    }
+  }, [elements, onSetElement, onSetBatchElements]);
 
   const handleBringToFront = () => {
     const maxZ = Math.max(...elements.map((el) => el.zIndex ?? 0), 0);
@@ -1002,6 +1345,113 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
     }
   };
 
+  // Spacebar panning listener & hotkeys (relocated below handler definitions with complete dependencies)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in textarea, input, or inline editing
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName) || editingItem) {
+        return;
+      }
+
+      if (e.code === 'Space' && !e.repeat && !isSpacePressed) {
+        setIsSpacePressed(true);
+      }
+
+      // Delete/Backspace: filter out locked elements
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
+        e.preventDefault();
+        const deletableIds = selectedIds.filter((id) => !elements.find((el) => el.id === id)?.locked);
+        if (deletableIds.length > 0) {
+          onDeleteElements(deletableIds);
+          setSelectedIds((prev) => prev.filter((id) => !deletableIds.includes(id)));
+        }
+      }
+
+      // Escape
+      if (e.key === 'Escape') {
+        setSelectedIds([]);
+        if (editingItem) {
+          commitInlineEdit();
+        }
+        setContextMenu(null);
+        onSetTool('select');
+      }
+
+      // Select all (Ctrl+A / Cmd+A)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setSelectedIds(elements.map((el) => el.id));
+        onSetTool('select');
+      }
+
+      // Copy (Ctrl+C / Cmd+C)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selectedIds.length > 0) {
+        e.preventDefault();
+        onCopyElements();
+      }
+
+      // Cut (Ctrl+X / Cmd+X)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x' && selectedIds.length > 0) {
+        e.preventDefault();
+        handleCut();
+      }
+
+      // Layer ordering shortcuts: [ and ]
+      if (e.key === ']' && selectedIds.length > 0) {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          handleBringToFront();
+        } else {
+          handleBringForward();
+        }
+      }
+      if (e.key === '[' && selectedIds.length > 0) {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          handleSendToBack();
+        } else {
+          handleSendBackward();
+        }
+      }
+
+      // Duplicate (Ctrl+D / Cmd+D)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedIds.length > 0) {
+        e.preventDefault();
+        handleDuplicate();
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setIsSpacePressed(false);
+        setIsPanning(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [
+    selectedIds,
+    elements,
+    editingItem,
+    isSpacePressed,
+    onDeleteElements,
+    setSelectedIds,
+    onSetTool,
+    onCopyElements,
+    onCutElements,
+    handleBringToFront,
+    handleBringForward,
+    handleSendToBack,
+    handleSendBackward,
+    handleDuplicate,
+    commitInlineEdit,
+  ]);
+
   // Drag & Drop image onto canvas
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -1100,8 +1550,8 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         onTouchEnd={handleMouseUp}
         onContextMenu={handleContextMenu}
       >
-        <Layer ref={layerRef}>
-          {/* Background Grid */}
+        {/* Layer 1: Static Background Grid (listening={false} isolates dot redraws) */}
+        <Layer id="grid-layer" listening={false}>
           <GridBackground
             width={stageSize.width}
             height={stageSize.height}
@@ -1111,8 +1561,10 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             gridType={gridType}
             theme={theme}
           />
+        </Layer>
 
-          {/* Render All Yjs Canvas Elements */}
+        {/* Layer 2: Main Interactive Content Layer */}
+        <Layer id="elements-layer" ref={layerRef}>
           {elements.map((el) => (
             <ElementRenderer
               key={el.id}
@@ -1120,6 +1572,9 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
               isSelected={selectedIds.includes(el.id)}
               onSelect={handleSelectElement}
               onChange={handleElementChange}
+              onDragStart={handleElementDragStart}
+              onDragMove={handleElementDragMove}
+              onDragEnd={handleElementDragEnd}
               onStartEditing={handleStartEditing}
               isEditing={editingItem?.id === el.id}
             />
@@ -1203,10 +1658,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
             />
           )}
 
-          {/* Real-Time Collaborator Cursors */}
-          <PeerCursors collaborators={collaborators} />
-
-          {/* Konva Transformer */}
+          {/* Konva Transformer (Locks resize & rotation if any selected element is locked) */}
           <Transformer
             ref={transformerRef}
             boundBoxFunc={(oldBox, newBox) => {
@@ -1215,28 +1667,68 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
               }
               return newBox;
             }}
-            rotateEnabled={true}
-            enabledAnchors={[
-              'top-left',
-              'top-center',
-              'top-right',
-              'middle-right',
-              'middle-left',
-              'bottom-left',
-              'bottom-center',
-              'bottom-right',
-            ]}
+            resizeEnabled={!isSelectionLocked}
+            rotateEnabled={!isSelectionLocked}
+            enabledAnchors={
+              isSelectionLocked
+                ? []
+                : [
+                    'top-left',
+                    'top-center',
+                    'top-right',
+                    'middle-right',
+                    'middle-left',
+                    'bottom-left',
+                    'bottom-center',
+                    'bottom-right',
+                  ]
+            }
+            borderStroke={isSelectionLocked ? '#f59e0b' : '#6366f1'}
+            borderDash={isSelectionLocked ? [2, 2] : [4, 4]}
             anchorSize={9}
             anchorCornerRadius={3}
             anchorStroke="#6366f1"
             anchorFill="#ffffff"
-            borderStroke="#6366f1"
-            borderDash={[4, 4]}
           />
+        </Layer>
+
+        {/* Layer 3: Dynamic Alignment Guides Overlay (listening={false}) */}
+        <Layer id="guides-overlay-layer" listening={false}>
+          {alignmentGuides.map((guide, idx) => (
+            <KonvaLine
+              key={`guide-${idx}`}
+              points={guide.points}
+              stroke="#ec4899"
+              strokeWidth={1 / stageScale}
+              dash={[4 / stageScale, 4 / stageScale]}
+              listening={false}
+            />
+          ))}
+        </Layer>
+
+        {/* Layer 4: Ephemeral Collaboration Layer (listening={false}) */}
+        <Layer id="ephemeral-layer" listening={false}>
+          {/* Local Laser Trail */}
+          {localLaserTrail.length >= 4 && (
+            <KonvaLine
+              points={localLaserTrail}
+              stroke="#ef4444"
+              strokeWidth={4}
+              tension={0.5}
+              lineCap="round"
+              lineJoin="round"
+              shadowColor="#ef4444"
+              shadowBlur={12}
+              shadowOpacity={0.8}
+              listening={false}
+            />
+          )}
+
+          <PeerCursors collaborators={collaborators} />
         </Layer>
       </Stage>
 
-      {/* Floating Badges for Object Reactions & Comment Counts */}
+      {/* Floating Badges for Object Reactions & Comment Counts & Lock Status */}
       <ObjectOverlayBadges
         elements={elements}
         comments={comments}
@@ -1248,6 +1740,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
         onToggleReaction={onToggleReaction}
         onOpenEmojiPicker={onOpenEmojiPicker}
         onOpenComments={onOpenComments}
+        onUnlockElement={handleUnlockElement}
       />
 
       {/* Custom Context Menu */}
@@ -1265,6 +1758,20 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           onSendToBack={handleSendToBack}
           onBringForward={handleBringForward}
           onSendBackward={handleSendBackward}
+          onToggleLock={handleToggleLock}
+          onGroup={handleGroup}
+          onUngroup={handleUngroup}
+          onExportFrame={(frameId) => {
+            const frameEl = elements.find((e) => e.id === frameId);
+            if (frameEl && stageRef.current) {
+              exportStageToPNG(stageRef.current, {
+                fileName: `${(frameEl as any).title || 'frame'}.png`,
+                pixelRatio: 2,
+                scope: 'selection',
+                selectedIds: [frameId],
+              });
+            }
+          }}
           onEditItem={() => {
             if (contextMenu.targetElement) {
               const el = contextMenu.targetElement;
@@ -1300,7 +1807,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           onExportViewport={handleExportCurrentViewport}
           onUploadImage={onUploadImagePrompt}
           onCopy={onCopyElements}
-          onCut={onCutElements}
+          onCut={handleCut}
           onPaste={onPasteElements}
           hasClipboard={clipboard.length > 0}
           onToggleReaction={onToggleReaction}

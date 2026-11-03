@@ -1,4 +1,3 @@
-import React from 'react';
 import {
   Trash2,
   Copy,
@@ -6,6 +5,18 @@ import {
   ArrowDown,
   Smile,
   MessageSquare,
+  Lock,
+  Unlock,
+  Group,
+  Ungroup,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  Columns as DistributeHorizontalIcon,
+  Rows as DistributeVerticalIcon,
 } from 'lucide-react';
 import {
   CanvasElement,
@@ -13,6 +24,8 @@ import {
   ToolProperties,
   StickyColor,
   ThemeMode,
+  AlignmentType,
+  DistributionType,
 } from '../../types/whiteboard';
 
 interface PropertyBarProps {
@@ -25,6 +38,11 @@ interface PropertyBarProps {
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
   onReorderSelected: (direction: 'up' | 'down') => void;
+  onToggleLockSelected?: () => void;
+  onGroupSelected?: () => void;
+  onUngroupSelected?: () => void;
+  onAlignSelected?: (alignment: AlignmentType) => void;
+  onDistributeSelected?: (direction: DistributionType) => void;
   onOpenEmojiPicker?: (elementId: string, position: { x: number; y: number }) => void;
   onOpenComments?: (elementId: string) => void;
   commentCount?: number;
@@ -82,6 +100,11 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
   onDeleteSelected,
   onDuplicateSelected,
   onReorderSelected,
+  onToggleLockSelected,
+  onGroupSelected,
+  onUngroupSelected,
+  onAlignSelected,
+  onDistributeSelected,
   onOpenEmojiPicker,
   onOpenComments,
   commentCount = 0,
@@ -89,6 +112,11 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
   const isDark = theme === 'dark';
   const hasSelection = selectedElements.length > 0;
   const primarySelected = selectedElements[0];
+
+  // Derived Selection Status
+  const isAllLocked = hasSelection && selectedElements.every((el) => el.locked);
+  const canGroup = selectedElements.length >= 2;
+  const hasGroup = selectedElements.some((el) => !!el.groupId);
 
   // Determine what controls to show
   const showStickyColors = currentTool === 'sticky' || (hasSelection && primarySelected?.type === 'sticky');
@@ -115,33 +143,178 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
       {/* Selection Action Controls */}
       {hasSelection && (
         <div className={`flex items-center gap-1.5 border-r pr-3 ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
+          {/* Lock / Unlock Toggle Button */}
+          {onToggleLockSelected && (
+            <button
+              onClick={onToggleLockSelected}
+              title={isAllLocked ? "Unlock Selection (Ctrl+L / Cmd+L)" : "Lock Selection (Ctrl+L / Cmd+L)"}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                isAllLocked
+                  ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40 hover:bg-amber-500/30'
+                  : isDark
+                  ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
+                  : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              {isAllLocked ? (
+                <>
+                  <Unlock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Unlock</span>
+                </>
+              ) : (
+                <>
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Lock</span>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Group Button */}
+          {canGroup && onGroupSelected && (
+            <button
+              onClick={onGroupSelected}
+              disabled={isAllLocked}
+              title={isAllLocked ? "Cannot group locked elements" : "Group Selection (Ctrl+G)"}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                isAllLocked
+                  ? 'opacity-40 cursor-not-allowed text-slate-500'
+                  : isDark
+                  ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
+                  : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <Group className="w-3.5 h-3.5" />
+              <span>Group</span>
+            </button>
+          )}
+
+          {/* Ungroup Button */}
+          {hasGroup && onUngroupSelected && (
+            <button
+              onClick={onUngroupSelected}
+              disabled={isAllLocked}
+              title={isAllLocked ? "Cannot ungroup locked elements" : "Ungroup Selection (Ctrl+Shift+G)"}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
+                isAllLocked
+                  ? 'opacity-40 cursor-not-allowed text-slate-500'
+                  : isDark
+                  ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
+                  : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+              }`}
+            >
+              <Ungroup className="w-3.5 h-3.5" />
+              <span>Ungroup</span>
+            </button>
+          )}
+
+          {/* Alignment & Distribution Cluster (When 2+ elements selected) */}
+          {selectedElements.length >= 2 && onAlignSelected && onDistributeSelected && (
+            <div className={`flex items-center gap-1 border-l pl-2 ${isDark ? 'border-slate-700/60' : 'border-slate-200'}`}>
+              <button
+                onClick={() => onAlignSelected('left')}
+                title="Align Left"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('center')}
+                title="Align Center"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignCenter className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('right')}
+                title="Align Right"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('top')}
+                title="Align Top"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignStartVertical className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('middle')}
+                title="Align Middle"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignCenterVertical className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onAlignSelected('bottom')}
+                title="Align Bottom"
+                className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+              >
+                <AlignEndVertical className="w-3.5 h-3.5" />
+              </button>
+              {selectedElements.length >= 3 && (
+                <>
+                  <button
+                    onClick={() => onDistributeSelected('horizontal')}
+                    title="Distribute Horizontally"
+                    className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+                  >
+                    <DistributeHorizontalIcon className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => onDistributeSelected('vertical')}
+                    title="Distribute Vertically"
+                    className={`p-1.5 rounded hover:bg-indigo-500/20 text-slate-400 hover:text-indigo-400`}
+                  >
+                    <DistributeVerticalIcon className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Duplicate Button (disabled when isAllLocked) */}
           <button
             onClick={onDuplicateSelected}
-            title="Duplicate (Ctrl+D)"
+            disabled={isAllLocked}
+            title={isAllLocked ? "Cannot duplicate locked elements" : "Duplicate (Ctrl+D)"}
             className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg transition-all ${
-              isDark
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : isDark
                 ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
                 : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
             }`}
           >
             <Copy className="w-3.5 h-3.5" /> Duplicate
           </button>
+
+          {/* Bring Forward (disabled when isAllLocked) */}
           <button
             onClick={() => onReorderSelected('up')}
-            title="Bring Forward"
+            disabled={isAllLocked}
+            title={isAllLocked ? "Selection is locked" : "Bring Forward"}
             className={`p-1 rounded-lg transition-all ${
-              isDark
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : isDark
                 ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
                 : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
             }`}
           >
             <ArrowUp className="w-3.5 h-3.5" />
           </button>
+
+          {/* Send Backward (disabled when isAllLocked) */}
           <button
             onClick={() => onReorderSelected('down')}
-            title="Send Backward"
+            disabled={isAllLocked}
+            title={isAllLocked ? "Selection is locked" : "Send Backward"}
             className={`p-1 rounded-lg transition-all ${
-              isDark
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : isDark
                 ? 'text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700'
                 : 'text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
             }`}
@@ -183,11 +356,15 @@ export const PropertyBar: React.FC<PropertyBarProps> = ({
             </button>
           )}
 
+          {/* Delete (disabled when isAllLocked) */}
           <button
             onClick={onDeleteSelected}
-            title="Delete (Del)"
+            disabled={isAllLocked}
+            title={isAllLocked ? "Cannot delete locked elements" : "Delete (Del)"}
             className={`p-1 rounded-lg transition-all ${
-              isDark
+              isAllLocked
+                ? 'opacity-40 cursor-not-allowed text-slate-500'
+                : isDark
                 ? 'text-red-400 hover:text-red-300 bg-red-950/40 hover:bg-red-900/50'
                 : 'text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100'
             }`}

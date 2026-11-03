@@ -1,73 +1,85 @@
-# ScribblBoard - Collaborative Whiteboard Application
+# Scribblboard - Real-Time Collaborative Whiteboard
 
-A high-performance whiteboard web application built for marketing and school projects. Built with **React 19**, **Konva.js**, **Yjs (CRDT)**, and **y-indexeddb** for local persistence, with an architecture ready for seamless transition to real-time multiplayer collaboration.
-
-## 🚀 Key Features
-
-### 1. CRDT State Architecture (Yjs)
-- **Decoupled State**: All canvas data (shapes, strokes, text, images, notes, z-index, timestamps) is stored in a `Y.Doc` shared map (`Y.Map<CanvasElement>`).
-- **Unidirectional Subscription**: Canvas render cycles subscribe to Yjs state changes rather than binding directly to transient local canvas state.
-- **Undo / Redo**: Integrated native `Y.UndoManager` for history tracking across CRDT transactions.
-
-### 2. URL Routing for Boards
-- Generates a unique UUID for each new board (`?board=[uuid]`).
-- Updates browser URL parameters using the History API without page reloads.
-- Persists board state in browser **IndexedDB** (`y-indexeddb`) keyed by the board UUID (`whiteboard-board-[uuid]`).
-- Refreshing the page or sharing the link loads the exact state for that board ID.
-
-### 3. Multiplayer Readiness
-- Architecture is designed to connect a real-time network provider (`y-websocket` or `y-webrtc`) with zero refactoring of the canvas or component layers:
-  ```ts
-  // In src/services/yjsDoc.ts
-  import { WebsocketProvider } from 'y-websocket';
-  const wsProvider = new WebsocketProvider('wss://your-server.com', boardId, this.doc);
-  ```
-
-### 4. Interactive Canvas Operations
-- **Infinite Pan**: Hold `Spacebar + Drag`, middle-click drag, or use the **Hand Tool (`H`)**.
-- **Smooth Zoom**: Mouse wheel zoom centered at cursor pointer, with zoom limits (10% to 500%).
-- **Interactive Grid**: Switch between `Dots`, `Grid Lines`, and `None`.
-
-### 5. Drawing & Creation Tools
-- **Select & Move (`V`)**: Single or multi-selection, drag, rotate, and scale bounding boxes via Konva Transformer.
-- **Freehand Pen (`P`)**: Smooth stroke rendering with configurable thickness and color.
-- **Geometric Shapes**: Rectangles (`R`), Circles/Ellipses (`C`), Arrows (`A`), Straight Lines (`L`).
-- **Sticky Notes (`S`)**: Realistic post-it notes with 6 pastel themes, drop shadow, auto-wrapping text, and double-click inline editor.
-- **Text Tool (`T`)**: Scalable text items with font size and color controls.
-- **Eraser (`E`)**: One-click or drag deletion of elements.
-
-### 6. Media Handling & Exports
-- **Drag-and-Drop Images**: Drag image files (`.png`, `.jpg`, `.svg`, `.webp`) directly from your desktop onto the canvas.
-- **Clipboard Paste**: Paste images or screenshots directly (`Ctrl+V` / `Cmd+V`).
-- **High-Resolution Exports**:
-  - Viewport export (1x PNG)
-  - Full board export (2x High-Definition PNG)
-  - Print-ready export (3x Ultra HD PNG)
-- **JSON Backup & Restore**: Download complete board data or import backups.
+Scribblboard is a fast, lightweight collaborative whiteboard built with **React 19**, **Konva.js**, and **Yjs CRDTs**. It provides offline persistence via IndexedDB and peer sync through WebSocket/WebRTC providers.
 
 ---
 
-## 🛠 Tech Stack
+## Features
 
-- **Frontend:** React 19, TypeScript, Tailwind CSS, Lucide Icons
-- **Canvas Rendering:** Konva.js / React-Konva
-- **CRDT Engine:** Yjs
-- **Local Persistence:** `y-indexeddb`
-- **Build Tool:** Vite
+### Real-Time Collaboration & CRDT State
+- **Decoupled CRDT Engine**: Canvas items (shapes, strokes, text, images, notes, frames, z-index) are maintained in a `Y.Doc` shared map (`Y.Map<CanvasElement>`).
+- **Live Peer Cursors & Presence**: Real-time cursor coordinates and user badges broadcasted through Yjs Awareness.
+- **Presenter Spotlight & Follow Mode**: Click on any peer avatar to follow their screen view in real time; pan or press `Esc` to detach.
+- **Ephemeral Laser Pointer (`K`)**: Presentations emit glowing laser trails synced live across peers without polluting persistent board state.
+- **Emoji Reactions & Threaded Comments**: Add reaction counters to canvas items or open threaded discussion panels with comment resolution.
+- **Undo / Redo**: Integrated with native `Y.UndoManager` (`Ctrl+Z`, `Ctrl+Y`).
+
+### Canvas & Structural Layout
+- **Object Locking (`Ctrl+L`)**: Prevent accidental moves, transforms, or deletion of background templates and diagrams.
+- **Grouping & Ungrouping (`Ctrl+G` / `Ctrl+Shift+G`)**: Group multiple items into a single bounding box for unified transform and atomic movement.
+- **Alignment & Distribution**: Align Left, Center, Right, Top, Middle, Bottom and distribute elements horizontally or vertically with even gaps.
+- **Smart Snapping & Dynamic Guides**: Snaps to nearby element edges and centerlines with temporary guide lines.
+- **Frames / Artboards (`F`)**: Dedicated container cards with editable titles that automatically bundle and move child items together.
+- **Interactive Radar Minimap**: Collapsible bird's-eye canvas viewport indicator in the corner with click-to-pan.
+- **Starter Templates**: 1-click starter setups for **Kanban Boards**, **Sprint Retrospectives**, **Flowcharts**, and **SWOT Matrices**.
+
+### Drawing, Media & Export
+- **Drawing Tools**: Freehand Pen (`P`), Rectangles (`R`), Circles (`C`), Straight Lines (`L`), and Magnetic Arrows (`A`) with snap anchors.
+- **Sticky Notes (`S`) & Text (`T`)**: 6 pastel color themes, shadow effects, auto-wrapping text, and double-click inline text editing.
+- **Image Insertion**: Drag-and-drop images from desktop, file picker, or clipboard paste (`Ctrl+V`).
+- **Export Options**: Export high-resolution PNG (1x, 2x, 3x), JPEG, SVG vector, or multi-page PDF documents.
+- **JSON Backup & Restore**: Complete board state export and restore.
 
 ---
 
-## 💻 Getting Started
+## Tech Stack
+
+- **Framework**: React 19, TypeScript
+- **Rendering**: Konva.js / React-Konva
+- **CRDT & Sync**: Yjs, `y-indexeddb`, `y-websocket`
+- **Styling & UI**: Tailwind CSS, Lucide Icons
+- **Build Tool**: Vite
+- **Testing**: Vitest
+
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Description |
+|---|---|
+| `V` | Select & Move tool |
+| `H` / `Space + Drag` | Hand / Pan canvas |
+| `K` | Temporary Laser Pointer |
+| `P` | Freehand Pen |
+| `R` / `C` | Rectangle / Circle |
+| `F` | Frame / Artboard |
+| `A` / `L` | Arrow (Snaps to shapes) / Straight Line |
+| `S` / `T` | Sticky Note / Text block |
+| `E` | Eraser |
+| `Ctrl + L` | Lock / Unlock selected elements |
+| `Ctrl + G` | Group selected elements (2+ items) |
+| `Ctrl + Shift + G` | Ungroup selected elements |
+| `Ctrl + C` / `X` / `V` | Copy, Cut, Paste |
+| `Ctrl + D` | Duplicate selection |
+| `Ctrl + Z` / `Ctrl + Y` | Undo / Redo |
+| `?` | Keyboard shortcuts cheat sheet |
+
+---
+
+## Getting Started
 
 ### Development
 ```bash
 npm install
 npm run dev
 ```
-Open `http://localhost:3000` in your browser.
+
+### Run Tests
+```bash
+npm test -- --run
+```
 
 ### Production Build
 ```bash
 npm run build
 ```
-The built assets will be located in the `dist/` directory.

@@ -11,6 +11,8 @@ import {
   Type,
   Eraser,
   Image as ImageIcon,
+  Frame,
+  Zap,
 } from 'lucide-react';
 import { ToolType, ThemeMode } from '../../types/whiteboard';
 
@@ -33,9 +35,11 @@ export const MainToolbar: React.FC<MainToolbarProps> = ({
   const tools: { id: ToolType; label: string; icon: React.ReactNode; shortcut: string }[] = [
     { id: 'select', label: 'Select & Move', icon: <MousePointer className="w-5 h-5" />, shortcut: 'V' },
     { id: 'pan', label: 'Hand / Pan', icon: <Hand className="w-5 h-5" />, shortcut: 'H' },
+    { id: 'laser', label: 'Laser Pointer', icon: <Zap className="w-5 h-5" />, shortcut: 'K' },
     { id: 'pen', label: 'Freehand Pen', icon: <Pencil className="w-5 h-5" />, shortcut: 'P' },
     { id: 'rect', label: 'Rectangle', icon: <Square className="w-5 h-5" />, shortcut: 'R' },
     { id: 'circle', label: 'Circle / Ellipse', icon: <Circle className="w-5 h-5" />, shortcut: 'C' },
+    { id: 'frame', label: 'Frame / Artboard', icon: <Frame className="w-5 h-5" />, shortcut: 'F' },
     { id: 'arrow', label: 'Arrow (Snaps to Shapes)', icon: <ArrowUpRight className="w-5 h-5" />, shortcut: 'A' },
     { id: 'line', label: 'Straight Line', icon: <Minus className="w-5 h-5" />, shortcut: 'L' },
     { id: 'sticky', label: 'Sticky Note', icon: <StickyNote className="w-5 h-5" />, shortcut: 'S' },

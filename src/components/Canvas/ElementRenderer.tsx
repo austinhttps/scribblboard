@@ -1,5 +1,5 @@
 import React from 'react';
-import { Line, Rect, Circle, Arrow } from 'react-konva';
+import { Line, Rect, Circle, Arrow, Group, Text as KonvaText } from 'react-konva';
 import { CanvasElement } from '../../types/whiteboard';
 import { StickyNote } from './StickyNote';
 import { TextItem } from './TextItem';
@@ -11,6 +11,9 @@ interface ElementRendererProps {
   isSelected: boolean;
   onSelect: (id: string, e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onChange: (id: string, newAttrs: Partial<CanvasElement>) => void;
+  onDragStart?: (id: string, e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragMove?: (id: string, e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd?: (id: string, e: Konva.KonvaEventObject<DragEvent>) => void;
   onStartEditing: (id: string, stageBox: any) => void;
   isEditing: boolean;
 }
@@ -20,6 +23,9 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
   isSelected,
   onSelect,
   onChange,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
   onStartEditing,
   isEditing,
 }) => {
@@ -42,17 +48,23 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           tension={0.5}
           lineCap="round"
           lineJoin="round"
-          draggable
+          draggable={!element.locked}
           onClick={handleSelect}
           onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
           onDragEnd={(e) => {
-            const dx = e.target.x();
-            const dy = e.target.y();
-            e.target.position({ x: 0, y: 0 }); // reset node offset
-            const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
-            handleChange({
-              points: updatedPoints,
-            });
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              const dx = e.target.x();
+              const dy = e.target.y();
+              e.target.position({ x: 0, y: 0 }); // reset node offset
+              const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
+              handleChange({
+                points: updatedPoints,
+              });
+            }
           }}
         />
       );
@@ -74,14 +86,20 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           shadowBlur={isSelected ? 10 : 2}
           shadowOpacity={isSelected ? 0.25 : 0.05}
           shadowOffsetY={2}
-          draggable
+          draggable={!element.locked}
           onClick={handleSelect}
           onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
           onDragEnd={(e) => {
-            handleChange({
-              x: e.target.x(),
-              y: e.target.y(),
-            });
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({
+                x: e.target.x(),
+                y: e.target.y(),
+              });
+            }
           }}
           onTransformEnd={(e) => {
             const node = e.target;
@@ -118,14 +136,20 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           shadowBlur={isSelected ? 10 : 2}
           shadowOpacity={isSelected ? 0.25 : 0.05}
           shadowOffsetY={2}
-          draggable
+          draggable={!element.locked}
           onClick={handleSelect}
           onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
           onDragEnd={(e) => {
-            handleChange({
-              x: e.target.x(),
-              y: e.target.y(),
-            });
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({
+                x: e.target.x(),
+                y: e.target.y(),
+              });
+            }
           }}
           onTransformEnd={(e) => {
             const node = e.target;
@@ -156,17 +180,23 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           strokeWidth={element.strokeWidth}
           pointerLength={element.pointerLength || 10}
           pointerWidth={element.pointerWidth || 10}
-          draggable
+          draggable={!element.locked}
           onClick={handleSelect}
           onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
           onDragEnd={(e) => {
-            const dx = e.target.x();
-            const dy = e.target.y();
-            e.target.position({ x: 0, y: 0 });
-            const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
-            handleChange({
-              points: updatedPoints,
-            });
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              const dx = e.target.x();
+              const dy = e.target.y();
+              e.target.position({ x: 0, y: 0 });
+              const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
+              handleChange({
+                points: updatedPoints,
+              });
+            }
           }}
         />
       );
@@ -179,17 +209,23 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           stroke={element.color}
           strokeWidth={element.strokeWidth}
           lineCap="round"
-          draggable
+          draggable={!element.locked}
           onClick={handleSelect}
           onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
           onDragEnd={(e) => {
-            const dx = e.target.x();
-            const dy = e.target.y();
-            e.target.position({ x: 0, y: 0 });
-            const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
-            handleChange({
-              points: updatedPoints,
-            });
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              const dx = e.target.x();
+              const dy = e.target.y();
+              e.target.position({ x: 0, y: 0 });
+              const updatedPoints = element.points.map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
+              handleChange({
+                points: updatedPoints,
+              });
+            }
           }}
         />
       );
@@ -201,6 +237,15 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           isSelected={isSelected}
           onSelect={handleSelect}
           onChange={handleChange}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
+          onDragEnd={(e) => {
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
           onStartEditing={onStartEditing}
           isEditing={isEditing}
         />
@@ -213,6 +258,15 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           isSelected={isSelected}
           onSelect={handleSelect}
           onChange={handleChange}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
+          onDragEnd={(e) => {
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
           onStartEditing={onStartEditing}
           isEditing={isEditing}
         />
@@ -225,7 +279,67 @@ export const ElementRenderer: React.FC<ElementRendererProps> = ({
           isSelected={isSelected}
           onSelect={handleSelect}
           onChange={handleChange}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
+          onDragEnd={(e) => {
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
         />
+      );
+
+    case 'frame':
+      return (
+        <Group
+          id={element.id}
+          x={element.x}
+          y={element.y}
+          draggable={!element.locked}
+          onClick={handleSelect}
+          onTap={handleSelect}
+          onDragStart={(e) => onDragStart?.(element.id, e)}
+          onDragMove={(e) => onDragMove?.(element.id, e)}
+          onDragEnd={(e) => {
+            if (onDragEnd) {
+              onDragEnd(element.id, e);
+            } else {
+              handleChange({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
+        >
+          {/* Frame Title Badge Above Boundary */}
+          <Group y={-26}>
+            <Rect
+              width={Math.max(80, (element.title?.length || 5) * 8 + 16)}
+              height={22}
+              fill="#e2e8f0"
+              cornerRadius={[4, 4, 0, 0]}
+            />
+            <KonvaText
+              x={8}
+              y={5}
+              text={element.title || 'Frame'}
+              fontSize={11}
+              fontStyle="bold"
+              fontFamily="Inter, sans-serif"
+              fill="#334155"
+            />
+          </Group>
+
+          {/* Frame Boundary Box */}
+          <Rect
+            width={element.width}
+            height={element.height}
+            fill={element.fill || 'transparent'}
+            stroke={element.stroke || (isSelected ? '#6366f1' : '#94a3b8')}
+            strokeWidth={element.strokeWidth || (isSelected ? 2 : 1.5)}
+            dash={[6, 4]}
+            cornerRadius={4}
+          />
+        </Group>
       );
 
     default:

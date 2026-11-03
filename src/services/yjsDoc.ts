@@ -28,7 +28,7 @@ const USER_NAMES = [
 /**
  * Manages the Yjs Document, IndexedDB persistence, WebSocket real-time sync, peer awareness, reactions, and threaded comments.
  */
-class WhiteboardService {
+export class WhiteboardService {
   private doc: Y.Doc | null = null;
   private indexeddbProvider: IndexeddbPersistence | null = null;
   private wsProvider: WebsocketProvider | null = null;
@@ -240,6 +240,22 @@ class WhiteboardService {
   }
 
   /**
+   * Update local viewport coordinates & zoom for presenter follow mode
+   */
+  public updateViewport(viewport: { x: number; y: number; scale: number }): void {
+    if (!this.wsProvider) return;
+    this.wsProvider.awareness.setLocalStateField('viewport', viewport);
+  }
+
+  /**
+   * Broadcast temporary laser trail in awareness without polluting persistent CRDT state
+   */
+  public updateLaserTrail(trail: { points: number[]; color: string; timestamp: number } | null): void {
+    if (!this.wsProvider) return;
+    this.wsProvider.awareness.setLocalStateField('laserTrail', trail);
+  }
+
+  /**
    * Update local user name
    */
   public updateUserName(name: string): void {
@@ -274,6 +290,8 @@ class WhiteboardService {
           name: state.user.name || 'Collaborator',
           color: state.user.color || '#6366f1',
           cursor: state.cursor || undefined,
+          viewport: state.viewport || undefined,
+          laserTrail: state.laserTrail || undefined,
         });
       }
     });
@@ -339,9 +357,10 @@ class WhiteboardService {
 
   /**
    * Batch set multiple elements in a single CRDT transaction.
+   * Guarantees atomic multiplayer sync and single-step undo/redo.
    */
   public setElements(elements: CanvasElement[], origin: string = 'local'): void {
-    if (!this.doc || !this.elementsMap) return;
+    if (!this.doc || !this.elementsMap || elements.length === 0) return;
 
     this.doc.transact(() => {
       elements.forEach((element) => {
@@ -352,6 +371,21 @@ class WhiteboardService {
       });
       this.metaMap?.set('initialized', true);
     }, origin);
+  }
+
+  /**
+   * Alias for setElements to ensure consistent naming across hooks and services.
+   */
+  public setBatchElements(elements: CanvasElement[], origin: string = 'local'): void {
+    this.setElements(elements, origin);
+  }
+
+  /**
+   * Execute an arbitrary block of CRDT mutations inside a single atomic transaction.
+   */
+  public transact(fn: () => void, origin: string = 'local'): void {
+    if (!this.doc) return;
+    this.doc.transact(fn, origin);
   }
 
   /**
@@ -480,10 +514,12 @@ class WhiteboardService {
   }
 
   /**
-   * Remove an element by ID.
+   * Remove an element by ID (guards against deleting locked elements).
    */
   public deleteElement(id: string, origin: string = 'local'): void {
     if (!this.doc || !this.elementsMap) return;
+    const el = this.elementsMap.get(id);
+    if (el?.locked) return;
 
     this.doc.transact(() => {
       this.elementsMap!.delete(id);
@@ -492,13 +528,18 @@ class WhiteboardService {
   }
 
   /**
-   * Delete multiple elements by IDs.
+   * Delete multiple elements by IDs (filters out locked elements).
    */
   public deleteElements(ids: string[], origin: string = 'local'): void {
     if (!this.doc || !this.elementsMap) return;
 
     this.doc.transact(() => {
-      ids.forEach((id) => this.elementsMap!.delete(id));
+      ids.forEach((id) => {
+        const el = this.elementsMap!.get(id);
+        if (!el?.locked) {
+          this.elementsMap!.delete(id);
+        }
+      });
       this.metaMap?.set('initialized', true);
     }, origin);
   }
@@ -660,6 +701,18 @@ class WhiteboardService {
 
   public isReady(): boolean {
     return this.isLoaded;
+  }
+
+  public getElementsMap(): Y.Map<CanvasElement> | null {
+    return this.elementsMap;
+  }
+
+  public getUndoManager(): Y.UndoManager | null {
+    return this.undoManager;
+  }
+
+  public getDoc(): Y.Doc | null {
+    return this.doc;
   }
 }
 
