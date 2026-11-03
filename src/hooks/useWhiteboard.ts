@@ -30,7 +30,7 @@ export function useWhiteboard() {
 
     const unsubscribeBoardName = whiteboardService.subscribeBoardName((name) => {
       setBoardNameState(name);
-      document.title = `${name} - CollabBoard`;
+      document.title = `${name} - scribblboard`;
     });
 
     const unsubscribeElements = whiteboardService.subscribe((updatedElements) => {
