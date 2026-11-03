@@ -1,4 +1,4 @@
-# CollabBoard - Collaborative Whiteboard Application
+# ScribblBoard - Collaborative Whiteboard Application
 
 A high-performance whiteboard web application built for marketing and school projects. Built with **React 19**, **Konva.js**, **Yjs (CRDT)**, and **y-indexeddb** for local persistence, with an architecture ready for seamless transition to real-time multiplayer collaboration.
 
