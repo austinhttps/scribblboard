@@ -221,7 +221,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div>
             <h1 className={`text-sm font-bold flex items-center gap-1.5 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-              CollabBoard
+              scribblboard
             </h1>
           </div>
         </div>
