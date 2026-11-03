@@ -1,5 +1,5 @@
 import React from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { MessageSquare, Plus, Lock } from 'lucide-react';
 import { CanvasElement, CommentThread, ThemeMode } from '../../types/whiteboard';
 
 interface ObjectOverlayBadgesProps {
@@ -12,6 +12,7 @@ interface ObjectOverlayBadgesProps {
   onToggleReaction: (elementId: string, emoji: string) => void;
   onOpenEmojiPicker: (elementId: string, position: { x: number; y: number }) => void;
   onOpenComments: (elementId: string) => void;
+  onUnlockElement?: (elementId: string) => void;
   theme: ThemeMode;
 }
 
@@ -25,6 +26,7 @@ export const ObjectOverlayBadges: React.FC<ObjectOverlayBadgesProps> = ({
   onToggleReaction,
   onOpenEmojiPicker,
   onOpenComments,
+  onUnlockElement,
   theme,
 }) => {
   const isDark = theme === 'dark';
@@ -78,6 +80,17 @@ export const ObjectOverlayBadges: React.FC<ObjectOverlayBadgesProps> = ({
         const screenWidth = width * stageScale;
         const screenHeight = height * stageScale;
 
+        // Frustum Culling: Skip elements completely outside viewport
+        const padding = 60;
+        if (
+          screenX + screenWidth < -padding ||
+          screenX > window.innerWidth + padding ||
+          screenY + screenHeight < -padding ||
+          screenY > window.innerHeight + padding
+        ) {
+          return null;
+        }
+
         // Group reactions for this element
         const rawReactions = el.reactions || [];
         const reactionGroups: { emoji: string; count: number; hasReacted: boolean; userNames: string[] }[] = [];
@@ -92,16 +105,46 @@ export const ObjectOverlayBadges: React.FC<ObjectOverlayBadgesProps> = ({
           if (r.userName && !group.userNames.includes(r.userName)) group.userNames.push(r.userName);
         });
 
+        const isLocked = !!el.locked;
         const elComments = commentsByElement.get(el.id) || [];
         const hasComments = elComments.length > 0;
         const isSelected = selectedIds.includes(el.id);
         const showReactions = reactionGroups.length > 0 || isSelected;
 
         // Don't render badges if offscreen or nothing to show
-        if (!showReactions && !hasComments) return null;
+        if (!showReactions && !hasComments && !isLocked) return null;
 
         return (
           <React.Fragment key={el.id}>
+            {/* Lock Badge at Top-Left of Object */}
+            {isLocked && (
+              <div
+                className="absolute pointer-events-auto transition-transform hover:scale-110"
+                style={{
+                  left: `${screenX}px`,
+                  top: `${screenY - 26}px`,
+                }}
+              >
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUnlockElement?.(el.id);
+                  }}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full shadow-md border text-[11px] font-medium transition-all ${
+                    isSelected
+                      ? 'bg-amber-500 text-slate-950 border-amber-400 font-semibold shadow-amber-500/30'
+                      : isDark
+                      ? 'bg-slate-900/90 text-amber-400 border-amber-500/40 hover:bg-amber-500 hover:text-slate-950'
+                      : 'bg-white/95 text-amber-600 border-amber-400/60 hover:bg-amber-500 hover:text-slate-950'
+                  }`}
+                  title="Locked element — Click to unlock (Ctrl+L)"
+                >
+                  <Lock className="w-3 h-3" />
+                  <span>{isSelected ? 'Unlock' : 'Locked'}</span>
+                </button>
+              </div>
+            )}
+
             {/* 1. Comment Badge at Top-Right of Object */}
             {(hasComments || isSelected) && (
               <div

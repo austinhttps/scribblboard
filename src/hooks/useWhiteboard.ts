@@ -89,6 +89,12 @@ export function useWhiteboard() {
     setCanRedo(whiteboardService.canRedo());
   }, []);
 
+  const transact = useCallback((fn: () => void) => {
+    whiteboardService.transact(fn);
+    setCanUndo(whiteboardService.canUndo());
+    setCanRedo(whiteboardService.canRedo());
+  }, []);
+
   const deleteElement = useCallback((id: string) => {
     whiteboardService.deleteElement(id);
     setCanUndo(whiteboardService.canUndo());
@@ -164,7 +170,9 @@ export function useWhiteboard() {
     createNewBoard,
     switchBoard,
     setElement,
+    setElements: setBatchElements,
     setBatchElements,
+    transact,
     deleteElement,
     deleteElements,
     toggleReaction,

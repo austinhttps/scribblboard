@@ -17,6 +17,9 @@ interface StickyNoteProps {
   isSelected: boolean;
   onSelect: (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => void;
   onChange: (newAttrs: Partial<StickyElement>) => void;
+  onDragStart?: (e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragMove?: (e: Konva.KonvaEventObject<DragEvent>) => void;
+  onDragEnd?: (e: Konva.KonvaEventObject<DragEvent>) => void;
   onStartEditing: (id: string, stageBox: { x: number; y: number; width: number; height: number; text: string; fontSize: number; color: StickyColor }) => void;
   isEditing: boolean;
 }
@@ -26,6 +29,9 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
   isSelected: _isSelected,
   onSelect,
   onChange,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
   onStartEditing,
   isEditing,
 }) => {
@@ -59,16 +65,22 @@ export const StickyNote: React.FC<StickyNoteProps> = ({
       x={element.x}
       y={element.y}
       rotation={element.rotation || 0}
-      draggable={!isEditing}
+      draggable={!element.locked && !isEditing}
       onClick={onSelect}
       onTap={onSelect}
       onDblClick={handleDoubleClick}
       onDblTap={handleDoubleClick}
+      onDragStart={onDragStart}
+      onDragMove={onDragMove}
       onDragEnd={(e) => {
-        onChange({
-          x: e.target.x(),
-          y: e.target.y(),
-        });
+        if (onDragEnd) {
+          onDragEnd(e);
+        } else {
+          onChange({
+            x: e.target.x(),
+            y: e.target.y(),
+          });
+        }
       }}
       onTransformEnd={(e) => {
         const node = e.target;

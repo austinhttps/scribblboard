@@ -56,6 +56,9 @@ export interface BaseElement {
   zIndex: number;
   updatedAt: number;
   reactions?: ReactionItem[];
+  locked?: boolean;
+  groupId?: string;
+  frameId?: string;
 }
 
 export interface PenElement extends BaseElement {

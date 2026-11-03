@@ -339,9 +339,10 @@ class WhiteboardService {
 
   /**
    * Batch set multiple elements in a single CRDT transaction.
+   * Guarantees atomic multiplayer sync and single-step undo/redo.
    */
   public setElements(elements: CanvasElement[], origin: string = 'local'): void {
-    if (!this.doc || !this.elementsMap) return;
+    if (!this.doc || !this.elementsMap || elements.length === 0) return;
 
     this.doc.transact(() => {
       elements.forEach((element) => {
@@ -352,6 +353,21 @@ class WhiteboardService {
       });
       this.metaMap?.set('initialized', true);
     }, origin);
+  }
+
+  /**
+   * Alias for setElements to ensure consistent naming across hooks and services.
+   */
+  public setBatchElements(elements: CanvasElement[], origin: string = 'local'): void {
+    this.setElements(elements, origin);
+  }
+
+  /**
+   * Execute an arbitrary block of CRDT mutations inside a single atomic transaction.
+   */
+  public transact(fn: () => void, origin: string = 'local'): void {
+    if (!this.doc) return;
+    this.doc.transact(fn, origin);
   }
 
   /**

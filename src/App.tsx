@@ -153,6 +153,68 @@ export function App() {
   // Selected elements list
   const selectedElements = elements.filter((el) => selectedIds.includes(el.id));
 
+  // Toggle lock status on selected elements (Ctrl+L / Cmd+L)
+  const handleToggleLock = useCallback(() => {
+    if (selectedElements.length === 0) return;
+
+    // If any selected item is unlocked, lock all; otherwise unlock all
+    const anyUnlocked = selectedElements.some((el) => !el.locked);
+    const targetLocked = anyUnlocked;
+
+    const updatedElements: CanvasElement[] = selectedElements.map((el) => {
+      const clone = { ...el, updatedAt: Date.now() };
+      if (targetLocked) {
+        clone.locked = true;
+      } else {
+        delete clone.locked;
+      }
+      return clone as CanvasElement;
+    });
+
+    setBatchElements(updatedElements);
+  }, [selectedElements, setBatchElements]);
+
+  // Group selected elements into a single logical group (Ctrl+G / Cmd+G)
+  const handleGroupSelected = useCallback(() => {
+    if (selectedElements.length < 2) return;
+
+    const newGroupId = crypto.randomUUID();
+    const updatedElements: CanvasElement[] = selectedElements.map((el) => ({
+      ...el,
+      groupId: newGroupId,
+      updatedAt: Date.now(),
+    } as CanvasElement));
+
+    setBatchElements(updatedElements);
+  }, [selectedElements, setBatchElements]);
+
+  // Ungroup selected elements (Ctrl+Shift+G / Cmd+Shift+G)
+  const handleUngroupSelected = useCallback(() => {
+    if (selectedElements.length === 0) return;
+
+    // Collect all group IDs present among selected items
+    const groupIdsToClear = new Set(
+      selectedElements
+        .map((el) => el.groupId)
+        .filter((gid): gid is string => Boolean(gid))
+    );
+
+    if (groupIdsToClear.size === 0) return;
+
+    // Clear groupId for all elements in the board belonging to these groups
+    const elementsToUpdate = elements
+      .filter((el) => el.groupId && groupIdsToClear.has(el.groupId))
+      .map((el) => {
+        const clone = { ...el, updatedAt: Date.now() };
+        delete clone.groupId;
+        return clone as CanvasElement;
+      });
+
+    if (elementsToUpdate.length > 0) {
+      setBatchElements(elementsToUpdate);
+    }
+  }, [elements, selectedElements, setBatchElements]);
+
   // Copy elements to clipboard
   const handleCopy = useCallback(() => {
     if (selectedElements.length > 0) {
@@ -214,18 +276,38 @@ export function App() {
     [clipboard, getNextZIndex, setElement]
   );
 
-  // Global hotkeys for tools & clipboard
+  // Global hotkeys for tools, locking, grouping, clipboard & actions
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) {
+      // Guard against typing in input fields, textareas, or contenteditable elements
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+          target.isContentEditable ||
+          target.getAttribute('contenteditable') === 'true')
+      ) {
+        return;
+      }
+      const activeEl = document.activeElement as HTMLElement | null;
+      if (
+        activeEl &&
+        (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName) ||
+          activeEl.isContentEditable ||
+          activeEl.getAttribute('contenteditable') === 'true')
+      ) {
         return;
       }
 
-      // Delete / Backspace key
+      // Delete / Backspace key (strictly delete only unlocked elements)
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         e.preventDefault();
-        deleteElements(selectedIds);
-        setSelectedIds([]);
+        const unlockedSelected = selectedElements.filter((el) => !el.locked);
+        if (unlockedSelected.length > 0) {
+          const unlockedIds = unlockedSelected.map((el) => el.id);
+          deleteElements(unlockedIds);
+          setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
+        }
         return;
       }
 
@@ -271,47 +353,83 @@ export function App() {
         }
       }
 
-      // Tool selection shortcuts
-      switch (e.key.toLowerCase()) {
-        case 'v':
-          setCurrentTool('select');
-          break;
-        case 'h':
-          setCurrentTool('pan');
-          break;
-        case 'p':
-          setCurrentTool('pen');
-          break;
-        case 'r':
-          setCurrentTool('rect');
-          break;
-        case 'c':
-          setCurrentTool('circle');
-          break;
-        case 'a':
-          setCurrentTool('arrow');
-          break;
-        case 'l':
-          setCurrentTool('line');
-          break;
-        case 's':
-          setCurrentTool('sticky');
-          break;
-        case 't':
-          setCurrentTool('text');
-          break;
-        case 'e':
-          setCurrentTool('eraser');
-          break;
-        case '?':
-          setIsShortcutsOpen((prev) => !prev);
-          break;
+      // Object Locking (Ctrl+L / Cmd+L)
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        if (selectedIds.length > 0) {
+          handleToggleLock();
+        }
+        return;
+      }
+
+      // Grouping (Ctrl+G / Cmd+G) and Ungrouping (Ctrl+Shift+G / Cmd+Shift+G)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleUngroupSelected();
+        } else if (selectedIds.length >= 2) {
+          handleGroupSelected();
+        }
+        return;
+      }
+
+      // Tool selection shortcuts (ONLY when no modifier keys are held)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 'v':
+            setCurrentTool('select');
+            break;
+          case 'h':
+            setCurrentTool('pan');
+            break;
+          case 'p':
+            setCurrentTool('pen');
+            break;
+          case 'r':
+            setCurrentTool('rect');
+            break;
+          case 'c':
+            setCurrentTool('circle');
+            break;
+          case 'a':
+            setCurrentTool('arrow');
+            break;
+          case 'l':
+            setCurrentTool('line');
+            break;
+          case 's':
+            setCurrentTool('sticky');
+            break;
+          case 't':
+            setCurrentTool('text');
+            break;
+          case 'e':
+            setCurrentTool('eraser');
+            break;
+          case '?':
+            setIsShortcutsOpen((prev) => !prev);
+            break;
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, selectedIds, elements, clipboard, handleCopy, handleCut, handlePaste, deleteElements]);
+  }, [
+    undo,
+    redo,
+    selectedIds,
+    selectedElements,
+    elements,
+    clipboard,
+    handleCopy,
+    handleCut,
+    handlePaste,
+    handleToggleLock,
+    handleGroupSelected,
+    handleUngroupSelected,
+    deleteElements,
+  ]);
 
   // Handle image upload from file picker
   const handleUploadImage = useCallback(
@@ -372,13 +490,17 @@ export function App() {
     [selectedElements, setElement]
   );
 
-  // Delete selected
+  // Delete selected (only unlocked elements)
   const handleDeleteSelected = useCallback(() => {
     if (selectedIds.length > 0) {
-      deleteElements(selectedIds);
-      setSelectedIds([]);
+      const unlockedSelected = selectedElements.filter((el) => !el.locked);
+      if (unlockedSelected.length > 0) {
+        const unlockedIds = unlockedSelected.map((el) => el.id);
+        deleteElements(unlockedIds);
+        setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
+      }
     }
-  }, [selectedIds, deleteElements]);
+  }, [selectedIds, selectedElements, deleteElements]);
 
   // Duplicate selected
   const handleDuplicateSelected = useCallback(() => {
@@ -466,6 +588,9 @@ export function App() {
         onDeleteSelected={handleDeleteSelected}
         onDuplicateSelected={handleDuplicateSelected}
         onReorderSelected={handleReorderSelected}
+        onToggleLockSelected={handleToggleLock}
+        onGroupSelected={handleGroupSelected}
+        onUngroupSelected={handleUngroupSelected}
         onOpenEmojiPicker={(elementId, position) => setActiveEmojiPicker({ elementId, position })}
         onOpenComments={(elementId) => setActiveCommentElementId(elementId)}
         commentCount={selectedCommentCount}
