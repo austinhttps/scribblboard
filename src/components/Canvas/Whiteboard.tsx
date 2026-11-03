@@ -713,21 +713,51 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   // Multi-element & group drag start handler
   const handleElementDragStart = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
     const draggedEl = elements.find((el) => el.id === id);
-    if (draggedEl?.locked) {
-      e.target.stopDrag();
-      return;
-    }
+    if (!draggedEl) return;
 
+    // 1. Determine all participating items in the drag
     let draggingIds = selectedIds.includes(id) ? [...selectedIds] : [id];
-    if (draggedEl?.groupId && !selectedIds.includes(id)) {
+    if (draggedEl.groupId && !selectedIds.includes(id)) {
       draggingIds = elements.filter((el) => el.groupId === draggedEl.groupId).map((el) => el.id);
       setSelectedIds(draggingIds);
     }
 
+    // 2. Expand group members for ALL elements participating in the drag
+    const groupIdsInDrag = new Set<string>();
+    draggingIds.forEach((elId) => {
+      const el = elements.find((item) => item.id === elId);
+      if (el?.groupId) groupIdsInDrag.add(el.groupId);
+    });
+    if (groupIdsInDrag.size > 0) {
+      const allGroupMemberIds = elements
+        .filter((el) => el.groupId && groupIdsInDrag.has(el.groupId))
+        .map((el) => el.id);
+      draggingIds = Array.from(new Set([...draggingIds, ...allGroupMemberIds]));
+    }
+
+    // 3. If ANY participating element is locked, cancel drag immediately
+    const hasLocked = draggingIds.some((elId) => {
+      const el = elements.find((item) => item.id === elId);
+      return el?.locked === true;
+    });
+
+    if (hasLocked) {
+      e.target.stopDrag();
+      // Snap node back to initial coordinate to eliminate any mousemove offset jitter
+      if (draggedEl.type === 'pen' || draggedEl.type === 'arrow' || draggedEl.type === 'line') {
+        e.target.position({ x: 0, y: 0 });
+      } else {
+        e.target.position({ x: draggedEl.x, y: draggedEl.y });
+      }
+      dragStartPositionsRef.current.clear();
+      return;
+    }
+
+    // 4. Register initial positions for all drag participants
     dragStartPositionsRef.current.clear();
     draggingIds.forEach((elId) => {
       const el = elements.find((item) => item.id === elId);
-      if (!el || el.locked) return;
+      if (!el) return;
       const node = layerRef.current?.findOne(`#${elId}`) as Konva.Node | undefined;
       dragStartPositionsRef.current.set(elId, {
         id: el.id,
@@ -766,16 +796,14 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   const handleElementDragEnd = (id: string, e: Konva.KonvaEventObject<DragEvent>) => {
     const leaderInitial = dragStartPositionsRef.current.get(id);
     if (!leaderInitial) {
+      // If drag was aborted/stopped due to a locked element, snap node back and commit nothing
       const el = elements.find((item) => item.id === id);
-      if (!el || el.locked) return;
-      if (el.type === 'pen' || el.type === 'arrow' || el.type === 'line') {
-        const dx = e.target.x();
-        const dy = e.target.y();
-        e.target.position({ x: 0, y: 0 });
-        const updatedPoints = (el.points || []).map((p, i) => (i % 2 === 0 ? p + dx : p + dy));
-        handleElementChange(id, { points: updatedPoints });
-      } else {
-        handleElementChange(id, { x: e.target.x(), y: e.target.y() });
+      if (el) {
+        if (el.type === 'pen' || el.type === 'arrow' || el.type === 'line') {
+          e.target.position({ x: 0, y: 0 });
+        } else {
+          e.target.position({ x: el.x, y: el.y });
+        }
       }
       return;
     }
@@ -914,16 +942,31 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
   const selectedElements = elements.filter((el) => selectedIds.includes(el.id));
 
   const handleDuplicate = () => {
-    const targetList = selectedElements.length > 0 ? selectedElements : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    const rawList = selectedElements.length > 0 ? selectedElements : (contextMenu?.targetElement ? [contextMenu.targetElement] : []);
+    // Filter out locked elements: if all are locked, do not duplicate; if mixed, duplicate only unlocked elements
+    const targetList = rawList.filter((el) => !el.locked);
+    if (targetList.length === 0) return;
+
     const duplicates: CanvasElement[] = [];
     const newIds: string[] = [];
+    const groupMap = new Map<string, string>();
 
     targetList.forEach((el) => {
       const newId = crypto.randomUUID();
       newIds.push(newId);
+
+      let newGroupId = el.groupId;
+      if (el.groupId) {
+        if (!groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+        newGroupId = groupMap.get(el.groupId);
+      }
+
       duplicates.push({
         ...el,
         id: newId,
+        groupId: newGroupId,
         x: el.x + 30,
         y: el.y + 30,
         zIndex: getNextZIndex(),
@@ -931,8 +974,15 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       });
     });
 
-    duplicates.forEach((dup) => onSetElement(dup));
+    onSetBatchElements(duplicates);
     setSelectedIds(newIds);
+  };
+
+  const handleCut = () => {
+    const hasUnlocked = selectedIds.some((id) => !elements.find((el) => el.id === id)?.locked);
+    if (hasUnlocked) {
+      onCutElements();
+    }
   };
 
   const handleDelete = () => {
@@ -1231,7 +1281,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
       // Cut (Ctrl+X / Cmd+X)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x' && selectedIds.length > 0) {
         e.preventDefault();
-        onCutElements();
+        handleCut();
       }
 
       // Layer ordering shortcuts: [ and ]
@@ -1618,7 +1668,7 @@ export const Whiteboard: React.FC<WhiteboardProps> = ({
           onExportViewport={handleExportCurrentViewport}
           onUploadImage={onUploadImagePrompt}
           onCopy={onCopyElements}
-          onCut={onCutElements}
+          onCut={handleCut}
           onPaste={onPasteElements}
           hasClipboard={clipboard.length > 0}
           onToggleReaction={onToggleReaction}

@@ -28,7 +28,7 @@ const USER_NAMES = [
 /**
  * Manages the Yjs Document, IndexedDB persistence, WebSocket real-time sync, peer awareness, reactions, and threaded comments.
  */
-class WhiteboardService {
+export class WhiteboardService {
   private doc: Y.Doc | null = null;
   private indexeddbProvider: IndexeddbPersistence | null = null;
   private wsProvider: WebsocketProvider | null = null;
@@ -496,10 +496,12 @@ class WhiteboardService {
   }
 
   /**
-   * Remove an element by ID.
+   * Remove an element by ID (guards against deleting locked elements).
    */
   public deleteElement(id: string, origin: string = 'local'): void {
     if (!this.doc || !this.elementsMap) return;
+    const el = this.elementsMap.get(id);
+    if (el?.locked) return;
 
     this.doc.transact(() => {
       this.elementsMap!.delete(id);
@@ -508,13 +510,18 @@ class WhiteboardService {
   }
 
   /**
-   * Delete multiple elements by IDs.
+   * Delete multiple elements by IDs (filters out locked elements).
    */
   public deleteElements(ids: string[], origin: string = 'local'): void {
     if (!this.doc || !this.elementsMap) return;
 
     this.doc.transact(() => {
-      ids.forEach((id) => this.elementsMap!.delete(id));
+      ids.forEach((id) => {
+        const el = this.elementsMap!.get(id);
+        if (!el?.locked) {
+          this.elementsMap!.delete(id);
+        }
+      });
       this.metaMap?.set('initialized', true);
     }, origin);
   }
@@ -676,6 +683,18 @@ class WhiteboardService {
 
   public isReady(): boolean {
     return this.isLoaded;
+  }
+
+  public getElementsMap(): Y.Map<CanvasElement> | null {
+    return this.elementsMap;
+  }
+
+  public getUndoManager(): Y.UndoManager | null {
+    return this.undoManager;
+  }
+
+  public getDoc(): Y.Doc | null {
+    return this.doc;
   }
 }
 

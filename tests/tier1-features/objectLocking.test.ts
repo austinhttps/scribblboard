@@ -1,19 +1,37 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { YjsTestHarness } from '../helpers/yjsTestHarness';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('y-indexeddb', () => ({
+  IndexeddbPersistence: class {
+    on() {}
+    destroy() {}
+  },
+}));
+
+vi.mock('y-websocket', () => ({
+  WebsocketProvider: class {
+    awareness = {
+      setLocalStateField: vi.fn(),
+      getStates: vi.fn(() => new Map()),
+      on: vi.fn(),
+    };
+    on() {}
+    destroy() {}
+  },
+}));
+
+import { whiteboardService } from '../../src/services/yjsDoc';
 import { CanvasElement, RectElement } from '../../src/types/whiteboard';
 
 describe('Tier 1: Feature 1 - Object Locking', () => {
-  let harness: YjsTestHarness;
-
   beforeEach(() => {
-    harness = new YjsTestHarness(101);
+    whiteboardService.initBoard(`test-lock-${Date.now()}-${Math.random()}`);
   });
 
   afterEach(() => {
-    harness.cleanup();
+    whiteboardService.cleanup();
   });
 
-  it('T1-LOCK-1: should persist locked: true flag on element in Yjs CRDT map', () => {
+  it('T1-LOCK-1: should persist locked: true flag on element in whiteboardService.elementsMap', () => {
     const rect: RectElement = {
       id: 'rect-1',
       type: 'rect',
@@ -29,11 +47,19 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       locked: true,
     };
 
-    harness.setElement(rect as CanvasElement);
-    const stored = harness.getElement('rect-1');
+    whiteboardService.setElement(rect as CanvasElement);
 
+    // Direct assertion against whiteboardService.elementsMap
+    const elementsMap = whiteboardService.getElementsMap();
+    expect(elementsMap).toBeDefined();
+    const rawStored = elementsMap!.get('rect-1');
+    expect(rawStored).toBeDefined();
+    expect(rawStored!.locked).toBe(true);
+
+    // Assertion via public service API
+    const stored = whiteboardService.getElements().find((e) => e.id === 'rect-1');
     expect(stored).toBeDefined();
-    expect((stored as any).locked).toBe(true);
+    expect(stored?.locked).toBe(true);
   });
 
   it('T1-LOCK-2: should prevent position displacement when element is locked', () => {
@@ -51,22 +77,24 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       updatedAt: Date.now(),
       locked: true,
     };
-    harness.setElement(rect as CanvasElement);
+    whiteboardService.setElement(rect as CanvasElement);
 
-    // Simulate drag attempt on locked element
-    const dragAttempt = (el: CanvasElement, dx: number, dy: number): CanvasElement => {
-      if ((el as any).locked) {
-        return el; // Locked items cannot be dragged
-      }
-      return { ...el, x: el.x + dx, y: el.y + dy };
+    // Canvas architecture prohibits dragging locked elements (draggable={!el.locked})
+    // Drag handlers abort displacement when element is locked
+    const attemptDisplacement = (id: string, dx: number, dy: number) => {
+      const el = whiteboardService.getElements().find((e) => e.id === id);
+      if (!el || el.locked) return;
+      whiteboardService.setElement({ ...el, x: el.x + dx, y: el.y + dy });
     };
 
-    const moved = dragAttempt(harness.getElement('rect-2')!, 50, 50);
-    expect(moved.x).toBe(50);
-    expect(moved.y).toBe(50);
+    attemptDisplacement('rect-2', 50, 50);
+
+    const el = whiteboardService.getElements().find((e) => e.id === 'rect-2')!;
+    expect(el.x).toBe(50);
+    expect(el.y).toBe(50);
   });
 
-  it('T1-LOCK-3: should reject delete operation when element is locked', () => {
+  it('T1-LOCK-3: should reject delete operation when element is locked through deletion logic', () => {
     const rect: RectElement = {
       id: 'rect-3',
       type: 'rect',
@@ -81,18 +109,26 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       updatedAt: Date.now(),
       locked: true,
     };
-    harness.setElement(rect as CanvasElement);
+    whiteboardService.setElement(rect as CanvasElement);
 
-    // Safe delete function respecting locked state
-    const safeDelete = (id: string) => {
-      const el = harness.getElement(id);
-      if (el && !(el as any).locked) {
-        harness.deleteElement(id);
-      }
-    };
+    // 1. Application-level deletion logic: filter out locked elements before issuing delete
+    const selectedIds = ['rect-3'];
+    const elements = whiteboardService.getElements();
+    const deletableIds = selectedIds.filter(
+      (id) => !elements.find((el) => el.id === id)?.locked
+    );
+    expect(deletableIds).toEqual([]);
 
-    safeDelete('rect-3');
-    expect(harness.getElement('rect-3')).toBeDefined();
+    if (deletableIds.length > 0) {
+      whiteboardService.deleteElements(deletableIds);
+    }
+
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-3')).toBeDefined();
+
+    // 2. Service-level deletion guard: calling deleteElement on locked element is rejected
+    whiteboardService.deleteElement('rect-3');
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-3')).toBeDefined();
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-3')?.locked).toBe(true);
   });
 
   it('T1-LOCK-4: should toggle lock state when toggle command (Ctrl+L) is triggered', () => {
@@ -110,24 +146,28 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       updatedAt: Date.now(),
       locked: false,
     };
-    harness.setElement(rect as CanvasElement);
+    whiteboardService.setElement(rect as CanvasElement);
 
-    const toggleLock = (id: string) => {
-      const el = harness.getElement(id);
-      if (!el) return;
-      harness.setElement({
+    // Production toggle logic from App.tsx handleToggleLock
+    const toggleLock = (ids: string[]) => {
+      const current = whiteboardService.getElements().filter((el) => ids.includes(el.id));
+      if (current.length === 0) return;
+      const anyUnlocked = current.some((el) => !el.locked);
+      const updated = current.map((el) => ({
         ...el,
-        locked: !(el as any).locked,
-      } as CanvasElement);
+        locked: anyUnlocked ? true : undefined,
+        updatedAt: Date.now(),
+      }));
+      whiteboardService.setBatchElements(updated);
     };
 
-    // Toggle on
-    toggleLock('rect-4');
-    expect((harness.getElement('rect-4') as any).locked).toBe(true);
+    // Toggle on -> locked: true
+    toggleLock(['rect-4']);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-4')?.locked).toBe(true);
 
-    // Toggle off
-    toggleLock('rect-4');
-    expect((harness.getElement('rect-4') as any).locked).toBe(false);
+    // Toggle off -> locked: undefined
+    toggleLock(['rect-4']);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-4')?.locked).toBeUndefined();
   });
 
   it('T1-LOCK-5: should re-allow drag and delete once unlocked', () => {
@@ -145,27 +185,29 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       updatedAt: Date.now(),
       locked: true,
     };
-    harness.setElement(rect as CanvasElement);
+    whiteboardService.setElement(rect as CanvasElement);
 
     // Unlock
-    harness.setElement({
-      ...harness.getElement('rect-5')!,
-      locked: false,
-    } as CanvasElement);
+    const el = whiteboardService.getElements().find((e) => e.id === 'rect-5')!;
+    const unlocked = { ...el, locked: false, updatedAt: Date.now() };
+    whiteboardService.setElement(unlocked);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-5')?.locked).toBe(false);
 
-    // Drag
-    const el = harness.getElement('rect-5')!;
-    const dragged = { ...el, x: el.x + 30, y: el.y + 40 };
-    harness.setElement(dragged);
-    expect(harness.getElement('rect-5')!.x).toBe(40);
-    expect(harness.getElement('rect-5')!.y).toBe(60);
+    // Drag unlocked element
+    const moved = { ...unlocked, x: unlocked.x + 30, y: unlocked.y + 40, updatedAt: Date.now() };
+    whiteboardService.setElement(moved);
+    const afterDrag = whiteboardService.getElements().find((e) => e.id === 'rect-5')!;
+    expect(afterDrag.x).toBe(40);
+    expect(afterDrag.y).toBe(60);
 
-    // Delete
-    harness.deleteElement('rect-5');
-    expect(harness.getElement('rect-5')).toBeUndefined();
+    // Delete unlocked element
+    const elements = whiteboardService.getElements();
+    const deletableIds = ['rect-5'].filter((id) => !elements.find((e) => e.id === id)?.locked);
+    whiteboardService.deleteElements(deletableIds);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-5')).toBeUndefined();
   });
 
-  it('T1-LOCK-6: should undo lock state change via Y.UndoManager', () => {
+  it('T1-LOCK-6: should undo and redo lock state change via whiteboardService.undo() / redo()', () => {
     const rect: RectElement = {
       id: 'rect-6',
       type: 'rect',
@@ -180,19 +222,28 @@ describe('Tier 1: Feature 1 - Object Locking', () => {
       updatedAt: Date.now(),
       locked: false,
     };
-    harness.setElement(rect as CanvasElement);
-    harness.undoManager.stopCapturing();
+    whiteboardService.setElement(rect as CanvasElement);
+    whiteboardService.getUndoManager()?.stopCapturing();
 
     // Lock element in separate transaction
-    harness.setElement({
-      ...harness.getElement('rect-6')!,
+    const target = whiteboardService.getElements().find((e) => e.id === 'rect-6')!;
+    whiteboardService.setElement({
+      ...target,
       locked: true,
-    } as CanvasElement);
-    expect((harness.getElement('rect-6') as any).locked).toBe(true);
+      updatedAt: Date.now(),
+    });
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-6')?.locked).toBe(true);
 
-    // Undo should restore locked: false
-    expect(harness.canUndo()).toBe(true);
-    harness.undo();
-    expect((harness.getElement('rect-6') as any).locked).toBe(false);
+    // Undo restores locked: false
+    expect(whiteboardService.canUndo()).toBe(true);
+    const undoResult = whiteboardService.undo();
+    expect(undoResult).toBe(true);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-6')?.locked).toBe(false);
+
+    // Redo restores locked: true
+    expect(whiteboardService.canRedo()).toBe(true);
+    const redoResult = whiteboardService.redo();
+    expect(redoResult).toBe(true);
+    expect(whiteboardService.getElements().find((e) => e.id === 'rect-6')?.locked).toBe(true);
   });
 });

@@ -222,14 +222,21 @@ export function App() {
     }
   }, [selectedElements]);
 
-  // Cut elements
+  // Cut elements (only unlocked elements are cut and deleted; locked elements remain on canvas)
   const handleCut = useCallback(() => {
     if (selectedElements.length > 0) {
+      const unlockedSelected = selectedElements.filter((el) => !el.locked);
+      if (unlockedSelected.length === 0) {
+        // If ALL selected elements are locked, handleCut is a safe no-op
+        return;
+      }
+      // If MIXED (or all unlocked), copy selection to clipboard, but ONLY delete unlocked elements
       setClipboard(selectedElements);
-      deleteElements(selectedIds);
-      setSelectedIds([]);
+      const unlockedIds = unlockedSelected.map((el) => el.id);
+      deleteElements(unlockedIds);
+      setSelectedIds((prev) => prev.filter((id) => !unlockedIds.includes(id)));
     }
-  }, [selectedElements, selectedIds, deleteElements]);
+  }, [selectedElements, deleteElements, setSelectedIds]);
 
   // Paste elements
   const handlePaste = useCallback(
@@ -238,6 +245,14 @@ export function App() {
 
       const newElements: CanvasElement[] = [];
       const newIds: string[] = [];
+
+      // Remap group IDs so pasted group members form their own distinct group
+      const groupMap = new Map<string, string>();
+      clipboard.forEach((el) => {
+        if (el.groupId && !groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+      });
 
       // Calculate bounding center of copied elements
       let minX = Infinity, minY = Infinity;
@@ -260,9 +275,11 @@ export function App() {
           targetY = point.y + offsetY;
         }
 
+        const newGroupId = el.groupId ? groupMap.get(el.groupId) : undefined;
         newElements.push({
           ...el,
           id: newId,
+          groupId: newGroupId,
           x: targetX,
           y: targetY,
           zIndex: getNextZIndex(),
@@ -270,11 +287,47 @@ export function App() {
         });
       });
 
-      newElements.forEach((item) => setElement(item));
+      setBatchElements(newElements);
       setSelectedIds(newIds);
     },
-    [clipboard, getNextZIndex, setElement]
+    [clipboard, getNextZIndex, setBatchElements]
   );
+
+  // Duplicate selected (only unlocked elements are duplicated; locked elements are shielded)
+  const handleDuplicateSelected = useCallback(() => {
+    const targetList = selectedElements.filter((el) => !el.locked);
+    if (targetList.length === 0) return;
+
+    const duplicates: CanvasElement[] = [];
+    const newIds: string[] = [];
+    const groupMap = new Map<string, string>();
+
+    targetList.forEach((el) => {
+      const newId = crypto.randomUUID();
+      newIds.push(newId);
+
+      let newGroupId = el.groupId;
+      if (el.groupId) {
+        if (!groupMap.has(el.groupId)) {
+          groupMap.set(el.groupId, crypto.randomUUID());
+        }
+        newGroupId = groupMap.get(el.groupId);
+      }
+
+      duplicates.push({
+        ...el,
+        id: newId,
+        groupId: newGroupId,
+        x: el.x + 30,
+        y: el.y + 30,
+        zIndex: getNextZIndex(),
+        updatedAt: Date.now(),
+      });
+    });
+
+    setBatchElements(duplicates);
+    setSelectedIds(newIds);
+  }, [selectedElements, getNextZIndex, setBatchElements]);
 
   // Global hotkeys for tools, locking, grouping, clipboard & actions
   useEffect(() => {
@@ -352,6 +405,11 @@ export function App() {
           return;
         }
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && selectedIds.length > 0) {
+        e.preventDefault();
+        handleDuplicateSelected();
+        return;
+      }
 
       // Object Locking (Ctrl+L / Cmd+L)
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'l') {
@@ -425,6 +483,7 @@ export function App() {
     handleCopy,
     handleCut,
     handlePaste,
+    handleDuplicateSelected,
     handleToggleLock,
     handleGroupSelected,
     handleUngroupSelected,
@@ -502,27 +561,6 @@ export function App() {
     }
   }, [selectedIds, selectedElements, deleteElements]);
 
-  // Duplicate selected
-  const handleDuplicateSelected = useCallback(() => {
-    const duplicates: CanvasElement[] = [];
-    const newIds: string[] = [];
-
-    selectedElements.forEach((el) => {
-      const newId = crypto.randomUUID();
-      newIds.push(newId);
-      duplicates.push({
-        ...el,
-        id: newId,
-        x: el.x + 30,
-        y: el.y + 30,
-        zIndex: getNextZIndex(),
-        updatedAt: Date.now(),
-      });
-    });
-
-    duplicates.forEach((dup) => setElement(dup));
-    setSelectedIds(newIds);
-  }, [selectedElements, getNextZIndex, setElement]);
 
   // Reorder layer
   const handleReorderSelected = useCallback(
