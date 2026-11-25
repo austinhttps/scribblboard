@@ -59,8 +59,14 @@ export class WhiteboardService {
       localStorage.setItem('collab_user_id', storedId);
     }
 
-    const name = storedName || USER_NAMES[Math.floor(Math.random() * USER_NAMES.length)];
-    const color = storedColor || USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)];
+    const getRandomIndex = (length: number) => {
+      const buffer = new Uint32Array(1);
+      crypto.getRandomValues(buffer);
+      return buffer[0] % length;
+    };
+
+    const name = storedName || USER_NAMES[getRandomIndex(USER_NAMES.length)];
+    const color = storedColor || USER_COLORS[getRandomIndex(USER_COLORS.length)];
 
     localStorage.setItem('collab_user_name', name);
     localStorage.setItem('collab_user_color', color);
